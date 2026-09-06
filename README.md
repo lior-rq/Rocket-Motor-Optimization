@@ -20,6 +20,8 @@ panel. Its [HTML source](docs/guide.html) is the file the PDF is rendered from.
 ```bash
 python3 app.py
 ```
+If you have a mac (supreme) you should be fine because it will auto install everything,
+however make sure you have 3.9 < python version < 3.12, otherwise it will blow up
 
 The first run builds an environment before starting: a `.venv` in the project folder,
 the packages listed in `requirements.txt`, and a clone of openMotor pinned to a known
