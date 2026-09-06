@@ -168,14 +168,25 @@ def _run(command, cwd: Optional[Path] = None, what: str = "",
 PERIMETER_SHIM = '"""Pure-Python stand-in for openMotor\'s compiled perimeter finder.\n\nWritten by this project\'s bootstrap when no C compiler was available to\nbuild the real one. It exists so motorlib can be imported. BATES motors\nnever call into it; grain geometries that walk a regression map do, and\nthey fail here rather than quietly return a wrong number.\n"""\n\n\ndef _get_perimeter(*args, **kwargs):\n    raise NotImplementedError(\n        "This grain geometry needs openMotor\'s compiled perimeter finder, "\n        "which was not built because no C compiler was available. BATES "\n        "grains do not need it. To use the others, install a compiler and "\n        "re-run setup: macOS \'xcode-select --install\', Debian \'apt install "\n        "build-essential python3-dev\', Windows \'Microsoft C++ Build Tools\'."\n    )\n'
 
 
-def write_perimeter_shim(vendor: Path) -> None:
-    """Lets the app run without a compiler, for the grains it supports."""
+def write_perimeter_shim(vendor: Path, log: Optional[Path] = None) -> None:
+    """Lets the app run without a compiler, for the grains it supports.
+
+    The wording matters. An earlier version of this notice opened with what had
+    failed and mentioned a compiler three times, and people read it as an
+    instruction to go and install one -- including someone who already had. It
+    leads with the outcome now, because the outcome is that nothing is wrong.
+    """
     target = vendor / "mathlib" / "_find_perimeter_cy.py"
     target.write_text(PERIMETER_SHIM)
-    print("  wrote a pure-Python stand-in for it instead.\n"
-          "  BATES motors -- everything this app optimises -- never call it, so\n"
-          "  the app runs normally. Other grain geometries would fail with a\n"
-          "  message saying a compiler is needed.\n")
+    print("\n  Note: openMotor has one compiled module that would not build here.\n"
+          "  Nothing is wrong and you do not need to install anything. This app\n"
+          "  never uses it -- it belongs to grain shapes this app does not\n"
+          "  optimise -- so a pure-Python stand-in went in its place and every\n"
+          "  part of the app works normally. Setup is finished.\n"
+          "\n"
+          "  (Only if you want that module built: {})\n".format(
+              "why it failed is in " + str(log) if log
+              else "the build output was not captured."))
 
 
 def build(root: Path = ROOT) -> Path:
@@ -228,14 +239,21 @@ def build(root: Path = ROOT) -> Path:
 
     # motorlib ships a Cython extension whose setup.py is too old for pip to
     # install editable, so build it in place and put it on the path with a .pth.
-    try:
-        _run([str(python), "setup.py", "build_ext", "--inplace"], cwd=vendor,
-             what="building openMotor's native extension")
-    except subprocess.CalledProcessError:
-        print("\n  The native extension did not build. The output above says why,\n"
-              "  and on Windows it is usually a C++ toolchain that setuptools\n"
-              "  cannot find even when cl.exe works in your shell.")
-        write_perimeter_shim(vendor)
+    # Run directly rather than through _run: when this step fails the app is
+    # fine without it, so its output is not something to flood the terminal
+    # with. Hundreds of lines of compiler errors followed by "nothing is wrong"
+    # reads as a disaster however the note underneath is worded.
+    print("  building openMotor's native extension")
+    attempt = subprocess.run(
+        [str(python), "setup.py", "build_ext", "--inplace"], cwd=str(vendor),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    if attempt.returncode != 0:
+        log = vendor / "build-failure.log"
+        try:
+            log.write_text(attempt.stdout or "")
+        except OSError:
+            log = None
+        write_perimeter_shim(vendor, log)
 
     site = subprocess.run(
         [str(python), "-c",
