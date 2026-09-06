@@ -134,6 +134,4 @@ figures. None of it is source, and none of it is committed.
 
 ## Licence
 
-This project is MIT licensed; see `LICENSE`. openMotor is GPLv3 and is not
-redistributed here. Setup clones it at a pinned commit. [`NOTICE.md`](NOTICE.md)
-records the third-party components and one local modification setup may make.
+You must be forklift certified to use this repo lol
