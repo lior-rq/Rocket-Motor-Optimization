@@ -191,6 +191,12 @@ class RunSpec:
     #: Independent searches to run and merge. Each is seeded differently, and
     #: the reported front is the non-dominated set of everything they found.
     seeds: int = 3
+    #: Simulations to run at once. None leaves it to the machine, which is two
+    #: short of its core count -- enough to keep the rest of the computer usable
+    #: while a search runs. Raise it to spend a machine that is doing nothing
+    #: else; measured scaling is near-linear to about four workers, still worth
+    #: it to eight, and can go backwards past the performance cores.
+    workers: Optional[int] = None
     #: "fast" runs the genetic search straight against openMotor. "pareto" adds
     #: a surrogate and maps the whole trade-off between objectives.
     mode: str = "fast"
@@ -266,6 +272,7 @@ class RunSpec:
             "effort": self.effort,
             "budget_simulations": self.budget_simulations,
             "seeds": self.seeds,
+            "workers": self.workers,
             "mode": self.mode,
             "seed": self.seed,
             "search_timestep": self.search_timestep,
@@ -284,6 +291,7 @@ class RunSpec:
             budget_simulations=(int(data["budget_simulations"])
                                 if data.get("budget_simulations") else None),
             seeds=max(1, int(data.get("seeds", 3) or 1)),
+            workers=(max(1, int(data["workers"])) if data.get("workers") else None),
             mode=data.get("mode", "fast"),
             seed=int(data.get("seed", 17)),
             search_timestep=float(data.get("search_timestep", 0.01)),

@@ -107,6 +107,7 @@ const App = (() => {
     state.baselineCurves = data.curves;
     state.hardware = data.hardware || {};
     state.toleranceFields = data.tolerance_fields || {};
+    state.machine = data.machine || {};
     if (!state.tolerances) state.tolerances = data.tolerances || [];
     renderMotor();
     renderHardware();
@@ -508,6 +509,36 @@ const App = (() => {
     seeds.onchange = () => {
       state.spec.seeds = Number(seeds.value); renderEffort(); validate();
     };
+
+    // Simulation is CPU-bound and runs one design per process, so this is the
+    // one setting that turns better hardware into a shorter wait.
+    const machine = state.machine || {};
+    const cores = machine.cores || 4;
+    const auto = machine.default_workers || Math.max(1, cores - 2);
+    const choices = [];
+    for (let n = 1; n <= cores; n++) {
+      if (n === 1 || n === cores || n === auto || n % Math.max(1, Math.round(cores / 6)) === 0) {
+        choices.push(n);
+      }
+    }
+    const workers = $('#workerCount');
+    workers.innerHTML =
+      `<option value="">Automatic — ${auto} of ${cores}</option>` +
+      [...new Set(choices)].sort((a, b) => a - b).map(n =>
+        `<option value="${n}" ${state.spec.workers === n ? 'selected' : ''}>${
+          n}${n === cores ? ' — all cores' : ''}</option>`).join('');
+    if (!state.spec.workers) workers.value = '';
+    workers.onchange = () => {
+      state.spec.workers = workers.value ? Number(workers.value) : null;
+      renderEffort(); validate();
+    };
+
+    $('#machineNote').innerHTML =
+      `This machine reports <strong>${cores}</strong> cores and runs about
+       <strong>${machine.rate || '?'}</strong> simulations a second
+       ${machine.rate_source === 'measured' ? '(measured here)' : '(estimated)'}.
+       Automatic leaves two alone so the computer stays usable; taking every core
+       is worth a little more if you are not using it for anything else.`;
   }
 
   /* ----------------------------------------------------------- validate */

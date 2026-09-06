@@ -8,6 +8,7 @@ it, fetch results, export a design. All the thinking lives in
 from __future__ import annotations
 
 import io
+import os
 import tempfile
 import threading
 import time
@@ -127,6 +128,7 @@ def get_defaults() -> JSONResponse:
         "effort_levels": EFFORT_LEVELS,
         "tolerance_fields": TOLERANCE_FIELDS,
         "tolerances": [t.to_dict() for t in default_tolerances()],
+        "machine": machine_summary(),
         "hardware": {
             "grain_diameter": motor["grains"][0]["properties"]["diameter"],
             "grain_length": motor["grains"][0]["properties"]["length"],
@@ -384,6 +386,23 @@ def _sim_rate(spec: RunSpec) -> float:
     return _rate_at(spec.search_timestep)
 
 
+def machine_summary() -> Dict:
+    """What this computer can do, measured rather than assumed.
+
+    Simulation is CPU-bound and runs one design per process, so cores are the
+    thing that matters. The default leaves two alone: a search that takes every
+    core makes the machine it is running on unpleasant to use, and measured
+    scaling flattens well before the last core anyway.
+    """
+    cores = os.cpu_count() or 2
+    return {
+        "cores": cores,
+        "default_workers": max(1, cores - 2),
+        "rate": round(THROUGHPUT["rate"], 1),
+        "rate_source": THROUGHPUT["source"],
+    }
+
+
 def _shape(spec: RunSpec) -> str:
     """Runs of the same shape have the same non-simulation costs."""
     return "{}:{}".format(spec.mode,
@@ -441,7 +460,8 @@ def start_run(payload: SpecPayload) -> JSONResponse:
     problems = spec.validate()
     if problems:
         raise HTTPException(400, "; ".join(problems))
-    job = jobs.start(spec, motor, predicted=_estimate(spec)["seconds"],
+    job = jobs.start(spec, motor, workers=spec.workers,
+                     predicted=_estimate(spec)["seconds"],
                      shape=_shape(spec), reports_dir=ROOT / "reports",
                      outputs_dir=ROOT / "outputs")
     return JSONResponse(job.status_dict())
