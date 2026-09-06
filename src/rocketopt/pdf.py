@@ -1,14 +1,8 @@
 """Turning a finished report into a PDF.
 
-A report is written as HTML because that is what the figures, tables and type
-are laid out in, but a report is a document people file, email and print, so
-the artefact they get handed is a PDF.
-
-Rendering is done by whatever Chromium-family browser is already installed.
-That is a real dependency, and a deliberate one: the report leans on grid,
-custom properties and web fonts, and the pure-Python HTML-to-PDF libraries
-render none of those faithfully -- a report that silently comes out looking
-wrong is worse than one that says it could not be made.
+Rendered by whatever Chromium-family browser is installed. A real dependency,
+and a deliberate one: the report uses grid, custom properties and web fonts,
+which the pure-Python HTML-to-PDF libraries do not render faithfully.
 """
 
 from __future__ import annotations
@@ -38,11 +32,8 @@ LINUX_BROWSERS = [
     "/snap/bin/chromium",
 ]
 
-#: Windows installs none of these on PATH, so the names below would never find
-#: them -- they have to be looked for where the installers put them. Both
-#: Program Files roots and the per-user location, since Chrome installs to
-#: LOCALAPPDATA when someone lacks admin rights, which on a school machine is
-#: the normal case.
+#: Windows puts none of these on PATH, so they are looked for where the
+#: installers put them. LOCALAPPDATA covers installs without admin rights.
 WINDOWS_BROWSER_SUFFIXES = [
     ("Google", "Chrome", "Application", "chrome.exe"),
     ("Microsoft", "Edge", "Application", "msedge.exe"),
@@ -97,8 +88,7 @@ def find_browser() -> Optional[str]:
 def html_to_pdf(html_path: Path, pdf_path: Path, timeout: int = 120) -> Path:
     """Renders one local HTML file to PDF. Raises :class:`NoBrowser` if it cannot.
 
-    The report is self-contained -- figures are embedded as data URIs -- so this
-    needs no network beyond the web fonts, which fall back cleanly when offline.
+    Self-contained apart from web fonts, which fall back cleanly offline.
     """
     browser = find_browser()
     if browser is None:
@@ -110,10 +100,8 @@ def html_to_pdf(html_path: Path, pdf_path: Path, timeout: int = 120) -> Path:
     pdf_path = Path(pdf_path).resolve()
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Deliberately no --user-data-dir. Pointing one at a fresh directory makes
-    # headless Chrome hang indefinitely on first-run profile setup; without it
-    # the render takes about two seconds. --no-sandbox is for CI and containers,
-    # where the sandbox cannot start.
+    # No --user-data-dir: a fresh one hangs headless Chrome on first-run
+    # profile setup. --no-sandbox is for CI and containers.
     try:
         subprocess.run(
             [browser, "--headless", "--disable-gpu", "--no-sandbox",

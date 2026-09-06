@@ -1,14 +1,8 @@
 """One report per design on the trade-off curve, zipped for sending.
 
-A run's report argues about the curve as a whole: what the trade is, which
-limit binds, why one end is unreachable. That is the right document for
-deciding. It is the wrong document for handing someone a motor, because the
-motor they are being handed is one row of one table in it.
-
-So this makes the other document: a one-page sheet per design, with its
-dimensions, what it does, how much room it has against each limit, and where it
-sits on the curve. Sixty of those in a zip is a set of options someone can
-actually circulate.
+The run report argues about the curve as a whole, which is the document for
+deciding. This is the other one: a sheet per design, with its dimensions, what
+it does, its room against each limit, and where it sits on the curve.
 """
 
 from __future__ import annotations
@@ -258,8 +252,7 @@ def build_bundle(run: ReportRun, base_motor: Dict, out_path: Path,
                  on_progress: ProgressFn = _noop) -> Path:
     """Writes one report per design and zips them.
 
-    Rendering is the slow part -- a browser launch per sheet -- so progress is
-    reported per design rather than left as a silent wait.
+    A browser launch per sheet, so progress is reported per design.
     """
     designs = run.designs[:MAX_SHEETS]
     if not designs:

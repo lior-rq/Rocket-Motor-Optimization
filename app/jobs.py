@@ -1,14 +1,8 @@
 """Background optimisation runs and their progress.
 
-An optimisation takes tens of seconds to several minutes, which is far too long
-to hold an HTTP request open. Each run therefore becomes a job with an id: the
-browser starts one, polls it about once a second, and collects the result when
-it finishes. The heavy work already happens in child processes via
-``SimulationPool``, so a plain thread here is enough to keep the server
-responsive.
-
-
-by the way if you are trying to understand this code, good luck.
+A run takes minutes, too long to hold an HTTP request open, so each becomes a
+job with an id that the browser polls. The heavy work is already in child
+processes, so a thread here is enough.
 """
 
 from __future__ import annotations
@@ -29,11 +23,7 @@ from rocketopt.spec import RunSpec
 
 
 def describe_spec(spec: RunSpec) -> str:
-    """A short name for what a run was allowed to move.
-
-    Reports name their own sections, so the label has to come from the
-    configuration rather than from whoever started the run.
-    """
+    """A short name for what a run was allowed to move."""
     free = [v.name for v in spec.variables if v.free]
     cores = sum(1 for n in free if n.startswith("core"))
     nozzle = [n for n in free if not n.startswith("core")]
@@ -60,22 +50,17 @@ class Job:
     result: Optional[RunResult] = None
     spec: Optional[RunSpec] = None
     label: str = ""
-    #: Latest generation snapshot, plus a short scalar history. Replaced rather
-    #: than appended so the poll payload stays a fixed size however long the
-    #: search runs.
+    #: Latest generation snapshot. Replaced, not appended, so the poll payload
+    #: stays a fixed size.
     telemetry: Optional[Dict] = None
     trace: List[Dict] = field(default_factory=list)
-    #: What the estimate promised, and which kind of run this is, so the
-    #: registry can learn how far off the estimate runs for this shape.
+    #: What the estimate promised, so the registry can learn its own error.
     predicted: float = 0.0
     shape: str = ""
-    #: The report for this run, written as soon as it finishes. Every run gets
-    #: one -- a run you have to remember to write up is a run you will not.
+    #: The report for this run, written as soon as it finishes.
     report: Optional[Path] = None
     report_error: str = ""
-    #: A zip holding one sheet per design on the trade-off curve. Built only on
-    #: request -- it is a browser launch per design, so it is not something to
-    #: do behind every run.
+    #: One sheet per design, zipped. On request only: a browser launch each.
     bundle: Optional[Path] = None
     bundle_status: str = "idle"      # idle | building | ready | failed
     bundle_done: int = 0
@@ -114,10 +99,8 @@ class JobRegistry:
         self._order: List[str] = []
         self._lock = threading.Lock()
         self.keep = keep
-        #: How wrong the estimate turned out to be, per kind of run. A run has
-        #: costs that are not simulations -- ranking, curve building, fitting --
-        #: and they differ by mode. Rather than bury another machine-specific
-        #: constant in the estimate, learn the correction from what happened.
+        #: How wrong the estimate was, per kind of run. Non-simulation costs
+        #: differ by mode, so the correction is learned rather than constant.
         self._factors: Dict[str, float] = {}
 
     def factor(self, shape: str) -> float:
@@ -128,10 +111,9 @@ class JobRegistry:
         return shape in self._factors
 
     def record_outcome(self, shape: str, predicted: float, actual: float) -> None:
-        """Folds one run's accuracy into the correction for its kind of run.
+        """Folds one run's accuracy into the correction for its shape.
 
-        Smoothed rather than replaced, so one unlucky run under load does not
-        throw the next estimate off in the other direction.
+        Smoothed, so one run under load does not overcorrect the next estimate.
         """
         if not predicted or predicted <= 0 or actual <= 0:
             return
@@ -141,11 +123,7 @@ class JobRegistry:
         self._factors[shape] = float(min(max(blended, 0.2), 5.0))
 
     def start_bundle(self, job: Job, base_motor: Dict, out_dir: Path) -> bool:
-        """Renders one sheet per design, in the background.
-
-        Sixty designs is sixty browser launches, so this cannot happen inside
-        the request that asks for it.
-        """
+        """Renders one sheet per design. One browser launch each, so not inline."""
         if job.result is None or job.status != "done":
             return False
         if job.bundle_status == "building":
@@ -220,8 +198,7 @@ class JobRegistry:
                 history.append({"seed": snapshot["seed_index"],
                                 "gen": snapshot["generation"],
                                 "a": best[0], "b": best[1]})
-                # A long run would otherwise accumulate thousands of points that
-                # no sparkline can show; thin the oldest half when it gets big.
+                # Thin the oldest half; no sparkline shows thousands of points.
                 if len(history) > 600:
                     del history[: len(history) // 2]
             snapshot["trace"] = history[-240:]
@@ -229,8 +206,7 @@ class JobRegistry:
 
         def progress(stage: str, fraction: float, message: str) -> None:
             if job._cancel.is_set():
-                # The optimiser has no cancel hook of its own, so raising out of
-                # the progress callback is how a run gets stopped mid-flight.
+                # The optimiser has no cancel hook; raising here is the way out.
                 raise RuntimeError("__cancelled__")
             job.stage, job.fraction, job.message = stage, fraction, message
 
@@ -239,14 +215,12 @@ class JobRegistry:
             try:
                 job.result = run(spec, base_motor, on_progress=progress,
                                  workers=workers, on_telemetry=telemetry)
-                # Every run produces its report, without being asked. Failing to
-                # write it must not lose the run that has already been done.
+                # A failed report must not lose the run that produced it.
                 if reports_dir is not None or outputs_dir is not None:
                     job.stage, job.fraction = "report", 0.97
                     job.message = "Writing the report"
                     try:
-                        # outputs/ mirrors the last run only, so it is emptied
-                        # first and the figures below land in the fresh folder.
+                        # outputs/ mirrors the last run only, so empty it first.
                         figures_dir = None
                         if outputs_dir is not None:
                             from rocketopt.runner import build_space
@@ -265,9 +239,7 @@ class JobRegistry:
                         traceback.print_exc()
                 job.status, job.stage, job.fraction = "done", "done", 1.0
                 job.message = "Finished"
-                # How long this kind of run really takes, for the next
-                # estimate. Only this one loop corrects -- see _rate_at in
-                # server.py for what happened when two of them did.
+                # The only correction loop; see _rate_at in server.py.
                 self.record_outcome(job.shape, job.predicted,
                                     time.time() - job.started_at)
             except Exception as exc:  # surfaced to the user, not swallowed

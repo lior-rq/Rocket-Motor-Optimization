@@ -1,8 +1,6 @@
 """HTTP surface for the motor optimizer.
 
-Deliberately small: load a motor, hand back sensible defaults, start a run, poll
-it, fetch results, export a design. All the thinking lives in
-``rocketopt.runner``; this only translates it to and from JSON.
+All the work lives in ``rocketopt.runner``; this translates it to and from JSON.
 """
 
 from __future__ import annotations
@@ -40,14 +38,11 @@ STATIC = Path(__file__).resolve().parent / "static"
 app = FastAPI(title="Lior's Really Good™ Rocket Optimizer")
 jobs = JobRegistry()
 
-#: The motor currently loaded. One app, one motor at a time -- this is a local
-#: single-user tool, and pretending otherwise would only add ceremony.
+#: The motor currently loaded. One at a time; this is a single-user tool.
 STATE: Dict = {"motor": None, "name": ""}
 
-#: Hardware overrides the user has typed into the Hardware panel this session.
-#: Empty by default, and deliberately so: a loaded .ric must simulate as the
-#: file says it does, or the app is lying about the motor in front of you.
-#: Overrides only ever come from an explicit edit.
+#: Hardware overrides from the Hardware panel. Empty unless explicitly edited,
+#: so a loaded .ric simulates as its file says.
 HARDWARE: Dict = {}
 
 
@@ -56,10 +51,7 @@ def _apply(motor: Dict) -> Dict:
 
 
 def _startup_motor() -> Optional[Path]:
-    """The motor to open with: whatever .ric is in the motor folder.
-
-    No file name is special. Drop a motor in and it is the one that loads.
-    """
+    """Whatever .ric is in the motor folder. No file name is special."""
     try:
         return motor_path(ROOT)
     except FileNotFoundError:
@@ -114,7 +106,7 @@ def motor_summary(motor: Dict) -> Dict:
     }
 
 
-# --------------------------------------------------------------------- routes
+# --- routes ---
 
 
 @app.get("/api/defaults")
@@ -241,8 +233,7 @@ def validate(payload: SpecPayload) -> JSONResponse:
         sizing["reduction"] = _plain_counts(reduction_chain(spec, motor))
     except Exception:
         sizing["reduction"] = None      # never let an extra insight break validate
-    # A count of zero means the rules contradict the bounds -- worth saying so
-    # here rather than letting the run fail a minute later.
+    # Zero means the rules contradict the bounds; say so before the run.
     if sizing.get("total") == 0:
         problems.append(
             "These rules leave no possible motor. The minimum increase between "
@@ -252,8 +243,7 @@ def validate(payload: SpecPayload) -> JSONResponse:
                 len(motor["grains"]),
                 max((v.high - v.low) / 0.0254 for v in spec.variables
                     if v.name.startswith("core"))))
-    # JavaScript loses integer precision past 2^53, so the exact count travels
-    # as a string and the pre-formatted text is what actually gets displayed.
+    # JavaScript loses integer precision past 2^53, so counts travel as text.
     if sizing.get("total") is not None:
         sizing["total_exact"] = str(sizing["total"])
     sizing["total"] = None if sizing.get("total") is None else float(sizing["total"])
@@ -283,8 +273,7 @@ class ApplyBounds(BaseModel):
 def apply_tighter_bounds(payload: ApplyBounds) -> JSONResponse:
     """Narrows the spec to the bounds the limits provably rule out.
 
-    Returns the edited spec rather than storing it, so the browser stays the
-    only place a configuration lives.
+    Returned rather than stored, so the browser holds the only configuration.
     """
     motor = _require_motor()
     spec = RunSpec.from_dict(payload.spec)
@@ -299,30 +288,25 @@ def apply_tighter_bounds(payload: ApplyBounds) -> JSONResponse:
                          "changes": tight.get("changes", [])})
 
 
-#: openMotor runs per second at a 0.01 s timestep. Only a starting guess --
-#: :func:`_calibrate` measures the real figure on this machine at startup, and
-#: every finished run replaces it with what actually happened.
+#: openMotor runs per second at 0.01 s. A guess until :func:`_calibrate` runs.
 THROUGHPUT: Dict = {"rate": 45.0, "source": "assumed"}
 
-#: A surrogate evaluation is a model call, not a burn. Measured on the gradient
-#: boosted models this app trains, batched as NSGA-II evaluates them.
+#: Surrogate evaluations per second. A model call, not a burn.
 SURROGATE_RATE = 12000.0
 
 #: Fitting the models and computing permutation importances, end to end.
 SURROGATE_OVERHEAD = 90.0
 
-#: Everything that is not a simulation: spinning up a process pool for each
-#: phase, ranking the survivors, building the curves the panels draw. Roughly
-#: flat, and it dominates a short run the way simulation dominates a long one.
+#: Everything that is not a simulation: pool startup, ranking, curve building.
+#: Roughly flat, so it dominates a short run.
 FIXED_OVERHEAD = 22.0
 
 
 def _calibrate() -> None:
-    """Times real simulations of the loaded motor, once, off the request path.
+    """Times real simulations once, off the request path.
 
-    The estimate used to quote a constant measured on one machine years of
-    hardware ago. Simulation cost is dominated by how many timesteps a burn
-    takes, which is a property of this motor on this CPU, so measure it.
+    Cost depends on the burn length and the CPU, so it is measured rather than
+    assumed from a constant.
     """
     motor = STATE.get("motor")
     if motor is None:
@@ -330,11 +314,8 @@ def _calibrate() -> None:
     try:
         from rocketopt.sampling import evaluate_batch, mixed_designs
 
-        # Time designs drawn from the space, not the loaded motor repeated.
-        # A search spends most of its life on motors that are nothing like the
-        # baseline -- a 0.5 in core in a 5 in grain has twice the web and burns
-        # for far longer, and a simulation costs what its burn costs. Measuring
-        # the baseline alone read an order of magnitude too fast.
+        # Designs drawn from the space, not the baseline repeated: a burn
+        # costs what its web costs, and the baseline is not representative.
         space = build_space(default_spec(motor), motor)
 
         def timed(n: int) -> float:
@@ -343,13 +324,9 @@ def _calibrate() -> None:
             evaluate_batch(space, X, timestep=0.01)
             return time.time() - started
 
-        # evaluate_batch spins up a fresh process pool per call, and on macOS
-        # that spawn costs more than the simulations do at these sizes. Timing
-        # two batch sizes and taking the slope cancels the fixed cost.
-        # Big enough to catch the slow tail: a design with a 0.5 in core burns
-        # for seconds while the baseline burns for a fraction of one, and the
-        # mean cost is dominated by those. A 16-design sample rarely draws one
-        # and read four times too fast.
+        # Each call spins up a fresh pool, which on macOS costs more than the
+        # simulations. Timing two sizes and taking the slope cancels that.
+        # Both are large enough to draw the slow long-burn tail.
         small, large = 32, 192
         t_small, t_large = timed(small), timed(large)
         slope = (t_large - t_small) / float(large - small)
@@ -368,16 +345,11 @@ _start_calibration()
 
 
 def _rate_at(timestep: float) -> float:
-    """Simulations per second at a given timestep.
+    """Simulations per second at a given timestep. A finer timestep is slower.
 
-    Cost scales with the number of steps in a burn, so a finer timestep is
-    slower, not faster.
-
-    Deliberately the startup calibration alone. Feeding finished runs back in
-    here as well as into the per-shape correction gave two loops chasing the
-    same error: a sampling run would set a slow global rate, every other kind
-    of run would inherit it, and their corrections would then fight it. One
-    stable base rate plus one correction per shape converges; two do not.
+    The startup calibration alone. Feeding finished runs in here as well as
+    into the per-shape correction gave two loops chasing one error, which
+    oscillated instead of converging.
     """
     return max(THROUGHPUT["rate"] * (max(timestep, 0.002) / 0.01) ** 0.75, 1.0)
 
@@ -389,10 +361,8 @@ def _sim_rate(spec: RunSpec) -> float:
 def machine_summary() -> Dict:
     """What this computer can do, measured rather than assumed.
 
-    Simulation is CPU-bound and runs one design per process, so cores are the
-    thing that matters. The default leaves two alone: a search that takes every
-    core makes the machine it is running on unpleasant to use, and measured
-    scaling flattens well before the last core anyway.
+    The default leaves two cores free; measured scaling flattens before the
+    last core anyway.
     """
     cores = os.cpu_count() or 2
     return {
@@ -413,33 +383,27 @@ def _estimate(spec: RunSpec) -> Dict:
     """Rough wall-clock, so nobody starts a five-minute run by accident."""
     budget = spec.budget
     free = max(1, sum(1 for v in spec.variables if v.free))
-    # Verification re-runs the survivors at the fine timestep, and the
-    # sensitivity sweep costs two more per free dimension.
+    # Verification plus two sensitivity runs per free dimension.
     verified = 60 + 2 * free
     predicted, overhead = 0, FIXED_OVERHEAD
 
     if spec.mode == "pareto":
-        # The search runs against the trained models, so the budget buys
-        # predictions rather than burns. Charging them at the simulator's rate
-        # is what made a 200k run quote an hour and finish in fifteen minutes.
+        # The budget buys predictions here, not burns. Charging them at the
+        # simulator's rate quoted an hour for a fifteen-minute run.
         searched = budget["samples"]
         predicted = budget["total"]
         overhead += SURROGATE_OVERHEAD
     else:
         searched = budget["total"]
         if len(spec.enabled_objectives) > 1:
-            # A multi-objective search verifies its front at the fine timestep
-            # once per seed, not just once at the end.
+            # Multi-objective verifies its front once per seed.
             verified += 40 * budget["seeds"]
 
     real = searched + verified
-    # Verification runs at the fine timestep, which is several times slower per
-    # simulation than the search. Charging it at the search rate understated
-    # every short run.
+    # Verification runs at the fine timestep, several times slower per run.
     seconds = (searched / _sim_rate(spec)
                + verified / _rate_at(spec.verify_timestep)
                + predicted / SURROGATE_RATE + overhead)
-    # Corrected by how far off this kind of run turned out to be last time.
     seconds *= jobs.factor(_shape(spec))
     return {"simulations": int(real + predicted), "seconds": int(seconds),
             "seeds": budget["seeds"], "pop": budget["pop"], "gen": budget["gen"],
@@ -448,8 +412,7 @@ def _estimate(spec: RunSpec) -> Dict:
             "rate": round(_sim_rate(spec), 1),
             "rate_source": THROUGHPUT["source"],
             "correction": round(jobs.factor(_shape(spec)), 2),
-            # A run of this shape has finished, so the figure is anchored to
-            # something that actually happened rather than a short benchmark.
+            # Anchored to a finished run rather than a short benchmark.
             "calibrated": jobs.has_seen(_shape(spec))}
 
 
@@ -475,11 +438,7 @@ def list_jobs() -> JSONResponse:
 
 @app.get("/api/jobs/{job_id}/report")
 def get_report(job_id: str) -> Response:
-    """The report written when this run finished.
-
-    There is no endpoint to build one: a run writes its own, so asking for a
-    report is only ever asking for a file that already exists.
-    """
+    """The report written when this run finished. Never built on request."""
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "Run {} is no longer held.".format(job_id))

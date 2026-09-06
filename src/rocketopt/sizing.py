@@ -1,21 +1,11 @@
-"""How many distinct motors a configuration actually admits.
+"""How many distinct motors a configuration admits.
 
-Not a plain product of the per-variable counts. Two things shrink it, and one
-thing makes it awkward:
+Not a product of the per-variable counts:
 
-* **Cores are stored sorted**, so a set of six core diameters is one motor, not
-  720. The count is a multiset coefficient rather than N⁶ -- for a 0.01 in grid
-  over 4 in that is the difference between 10²⁴ and 10¹⁵.
-* **Ordering rules cut further.** Requiring each core to exceed the one ahead of
-  it by a fixed step removes whole regions; grouping grains onto shared mandrels
-  removes independent dimensions outright.
-* **The exit is bounded by the throat**, so how many exit diameters exist
-  depends on which throat you picked. That sum is taken exactly rather than
-  approximated, because the two are not independent.
-
-The point of showing the number is context: a search that evaluates fourteen
-thousand designs out of 10¹⁵ is not being lazy, it is doing the only thing that
-was ever possible.
+* Cores are stored sorted, so the count is a multiset coefficient, not N⁶.
+* Ordering rules cut further, and grouping removes dimensions outright.
+* The exit is bounded by the throat, so that sum is taken exactly rather than
+  approximated.
 """
 
 from __future__ import annotations
@@ -227,14 +217,10 @@ def _duration(seconds: float) -> str:
     return "{:,.0f} years".format(years)
 
 
-# ---------------------------------------------------------------------------
-# Using the limits to shrink the space
-# ---------------------------------------------------------------------------
+# --- Using the limits to shrink the space ---
 
-#: The closed-form peak Kn below runs up to ~1% above what openMotor reports,
-#: because the simulator samples regression on a timestep and stops a grain a
-#: hair before its web is gone. Rejecting only past this margin means the screen
-#: can never discard a design the simulator would have accepted.
+#: The closed-form peak Kn runs up to ~1% above openMotor's, which samples
+#: regression on a timestep. This margin keeps the screen from over-rejecting.
 KN_SCREEN_MARGIN = 0.02
 
 
@@ -242,10 +228,8 @@ def peak_burn_area(cores: np.ndarray, diameter: float, length: float,
                    samples: int = 160) -> np.ndarray:
     """Largest burning area reached during the burn, uninhibited BATES.
 
-    openMotor gives, for each grain at regression r,
-    ``pi*(d+2r)*(L-2r) + (pi/2)*(D^2 - (d+2r)^2)`` while any web is left. That is
-    closed form, so the whole burn can be evaluated without simulating it -- and
-    the peak of the sum is what the Kn limit actually constrains.
+    ``pi*(d+2r)*(L-2r) + (pi/2)*(D^2 - (d+2r)^2)`` per grain while web remains,
+    so the peak is found without simulating.
     """
     cores = np.atleast_2d(np.asarray(cores, dtype=float))
     web = np.minimum((diameter - cores) / 2.0, length / 2.0)
@@ -272,15 +256,10 @@ def _core_grid(spec: RunSpec) -> Optional[np.ndarray]:
 def tighten_bounds(spec: RunSpec, base_motor: Dict) -> Dict:
     """Bounds the limits rule out outright, before any simulation.
 
-    Two of them are exact rather than heuristic:
-
-    * **Throat floor.** Burning area is smallest when every core is at its
-      minimum, so if even that area needs a bigger throat to hold Kn, no design
-      with a smaller throat can exist at all.
-    * **Core ceiling.** Holding every other core at its minimum, the widest a
-      single core can be before the largest allowed throat still cannot hold Kn.
-
-    Both are necessary conditions, so narrowing to them throws nothing away.
+    Throat floor: area is smallest with every core at its minimum, so if that
+    needs a wider throat, nothing narrower can be legal. Core ceiling: the widest
+    one core can be with the rest at minimum and the largest allowed throat.
+    Both are necessary conditions, so narrowing to them discards nothing.
     """
     grains = base_motor["grains"]
     diameter = grains[0]["properties"]["diameter"]
@@ -345,12 +324,8 @@ def _uniform_multisets(grid: np.ndarray, slots: int, samples: int,
                        rng) -> np.ndarray:
     """Uniform samples of the sorted core vectors, not of the ordered ones.
 
-    Sorting uniformly-drawn tuples is *not* uniform over sorted vectors -- it
-    over-weights sets with many distinct values, because those have more
-    orderings that collapse onto them. Since the count being reported is a count
-    of sorted vectors, the sampling has to match it, so this uses the
-    stars-and-bars bijection: choose ``slots`` distinct positions from
-    ``len(grid) + slots - 1`` and subtract their index.
+    Sorting uniform tuples over-weights sets with many distinct values, since
+    those have more orderings collapsing onto them. Uses stars-and-bars instead.
     """
     n = len(grid)
     picks = np.array([rng.choice(n + slots - 1, size=slots, replace=False)
@@ -361,13 +336,10 @@ def _uniform_multisets(grid: np.ndarray, slots: int, samples: int,
 
 def estimate_feasible(spec: RunSpec, base_motor: Dict, samples: int = 4000,
                       seed: int = 0) -> Dict:
-    """What share of the grid actually satisfies the closed-form limits.
+    """What share of the grid satisfies the closed-form limits.
 
-    Sampled rather than enumerated -- the space is far too large to walk -- but
-    every screen applied here is exact arithmetic on the same formulas openMotor
-    uses, so this is measuring the constraints and not a model of them. Only the
-    limits that are closed-form are applied, so the true legal share is at most
-    what comes back.
+    Sampled, but each screen is exact arithmetic rather than a model. Only
+    closed-form limits apply, so the true legal share is at most this.
     """
     grains = base_motor["grains"]
     diameter = grains[0]["properties"]["diameter"]
@@ -428,10 +400,8 @@ def estimate_feasible(spec: RunSpec, base_motor: Dict, samples: int = 4000,
 def equivalent_limits(spec: RunSpec, base_motor: Dict) -> List[Dict]:
     """Limits that are secretly the same limit.
 
-    Chamber pressure is a monotone function of Kn, so a pressure ceiling and a
-    Kn ceiling are one constraint wearing two hats. Knowing which of the two
-    actually binds -- and by how little -- is worth more than either number on
-    its own, because tightening the slack one changes nothing at all.
+    Pressure is monotone in Kn, so a ceiling on each is one constraint.
+    Tightening whichever does not bind changes nothing.
     """
     from motorlib.propellant import Propellant
 
@@ -476,12 +446,10 @@ def equivalent_limits(spec: RunSpec, base_motor: Dict) -> List[Dict]:
 
 def reduction_chain(spec: RunSpec, base_motor: Dict,
                     samples: int = 6000) -> Dict:
-    """Total, then what the limits provably remove, then what they likely remove.
+    """Total, what the limits provably remove, and what they likely remove.
 
-    Kept as three separate numbers because they have different standing: the
-    first is exact combinatorics, the second is exact arithmetic on the limits,
-    and the third is a sampled estimate with an interval on it. Collapsing them
-    into one figure would hide which is which.
+    Three numbers because they have different standing: exact combinatorics,
+    exact arithmetic, and a sampled estimate with an interval.
     """
     import copy
 

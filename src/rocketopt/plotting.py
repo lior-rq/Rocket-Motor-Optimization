@@ -1,13 +1,7 @@
-"""The look of every figure in the report.
+"""The palette and style shared by every figure in the report.
 
-Colours come from a validated categorical palette; the first three slots are
-the only ones used, because scatter plots put every pair on screen at once and
-past three slots the pairs stop being reliably distinguishable to colourblind
-readers. Every chart names its single y-quantity -- no dual axes.
-
-This used to hold the charts as well. They drew the figures for a set of study
-scripts that no longer exist; :mod:`rocketopt.report` and :mod:`rocketopt.bundle`
-draw their own against the palette below.
+Only the first three series slots are used: past three, the pairs stop being
+reliably distinguishable to colourblind readers. No dual axes.
 """
 
 from __future__ import annotations

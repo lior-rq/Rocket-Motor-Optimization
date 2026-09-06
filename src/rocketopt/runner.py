@@ -1,14 +1,7 @@
 """Turns a :class:`~rocketopt.spec.RunSpec` into results the app can draw.
 
-This is the only place that knows how a GUI configuration becomes a design
-space, an objective and a search strategy. Everything it calls -- the sampler,
-the surrogate, the two optimisers -- is the same machinery the study scripts
-use, so the app cannot drift away from the validated pipeline.
-
-One rule holds throughout: **nothing is reported that was not simulated.** The
-surrogate may propose, and the genetic search may run at a coarse timestep, but
-every design that reaches the user has been re-run in openMotor at the
-verification timestep with all safety margins removed.
+Nothing is reported that was not simulated: every design that reaches the user
+has been re-run at the verification timestep with all margins removed.
 """
 
 from __future__ import annotations
@@ -30,24 +23,18 @@ from .surrogate import Surrogate
 from .units import KG_M2S_PER_LB_IN2S, M_PER_IN
 
 ProgressFn = Callable[[str, float, str], None]
-#: Called once per generation with a snapshot of the live population, so a UI
-#: can show the search happening instead of a bar creeping across.
+#: Called once per generation with a snapshot of the live population.
 TelemetryFn = Callable[[Dict], None]
 
-#: Points sent per generation. A population of 240 is more than a scatter can
-#: usefully show at a glance, and the payload is polled once a second.
+#: Points sent per generation. More than a scatter shows usefully.
 TELEMETRY_POINTS = 160
 
-#: A single-objective search still has a population worth watching, but a
-#: scatter needs two axes. The objective goes on y and the first of these that
-#: is not already the objective goes on x -- it only frames the view, it never
-#: enters the search.
+#: Second axis for a single-objective live view. Framing only; never searched.
 COMPANION_METRICS = ("total_impulse", "initial_thrust", "isp", "burn_time",
                      "max_pressure")
 
-#: Small extra tightening on every limit during the search, on top of the
-#: measured timestep correction, because that correction was calibrated on one
-#: motor and the search visits many.
+#: Extra tightening on top of the measured timestep correction, which was
+#: calibrated on one motor.
 SEARCH_SAFETY_MARGIN = 0.005
 
 
@@ -67,9 +54,7 @@ def _snapshot(frame: pd.DataFrame, objective: Objective, space: DesignSpace,
         return None
     single = len(metrics) < 2
     if single:
-        # Optimising one metric is the app's default, and it used to mean no
-        # live view at all. Borrow a second axis so the population has somewhere
-        # to spread; "best so far" is then a single point rather than a front.
+        # Borrow a second axis so the population has somewhere to spread.
         companion = next((m for m in COMPANION_METRICS
                           if m != metrics[0] and m in frame.columns), None)
         if companion is None:
@@ -82,8 +67,7 @@ def _snapshot(frame: pd.DataFrame, objective: Objective, space: DesignSpace,
 
     order = np.arange(len(frame))
     if len(order) > TELEMETRY_POINTS:
-        # Keep every feasible design and thin the rest -- the feasible ones are
-        # what the front is made of, and they are usually the minority.
+        # Keep every feasible design; thin the rest.
         keep = np.flatnonzero(feasible)
         rest = np.flatnonzero(~feasible)
         room = max(TELEMETRY_POINTS - len(keep), 0)
@@ -129,19 +113,14 @@ def jsonable(value):
     return value
 
 
-# ---------------------------------------------------------------------------
-# Building the space and the objective from a spec
-# ---------------------------------------------------------------------------
+# --- Building the space and the objective from a spec ---
 
 
 def build_space(spec: RunSpec, base_motor: Dict) -> DesignSpace:
     """Maps GUI variables onto the internal design space.
 
-    The exit nozzle needs translating. A user sets an exit *diameter* range, but
-    internally the exit is a fraction of the span between the smallest useful
-    exit and the airframe limit -- that is what keeps exit > throat without a
-    coupled constraint. So the exit row moves into the SpaceConfig, and its slot
-    in the variable list becomes the fraction.
+    Exit is set as a diameter but stored as a fraction of the span above the
+    throat, which keeps exit > throat without a coupled constraint.
     """
     by_name = {v.name: v for v in spec.variables}
     n_grains = len(base_motor["grains"])
@@ -190,10 +169,8 @@ def apply_hardware(base_motor: Dict, grain_diameter: Optional[float] = None,
                    inhibited_ends: Optional[str] = None) -> Dict:
     """Restates the case hardware on a motor: grain OD, length, count, ends.
 
-    None of these are ever optimised -- they are the tube and the mould you
-    already own. Widening the grain leaves the cores alone, but narrowing it can
-    strand a core outside its own grain, so cores are pulled back to leave a
-    minimum web rather than producing a motor openMotor would reject.
+    Narrowing the grain can strand a core outside it, so cores are pulled back
+    to leave a minimum web.
     """
     from .ric import clone as _clone
 
@@ -222,12 +199,10 @@ def apply_hardware(base_motor: Dict, grain_diameter: Optional[float] = None,
 
 
 def default_spec(base_motor: Dict) -> RunSpec:
-    """A sensible starting configuration read off the motor itself.
+    """A starting configuration read off the motor itself.
 
-    Bounds bracket what the motor already is rather than spanning the whole
-    physically possible range, and the limits come from the .ric's own
-    ``maxPressure``/``maxMassFlux``/``minPortThroat``. So the first thing a user
-    sees is their own motor, legal and unchanged, with room to move.
+    Bounds bracket the motor as loaded; limits come from its own maxPressure,
+    maxMassFlux and minPortThroat.
     """
     from .spec import ConstraintSpec, ObjectiveSpec, OrderingSpec
 
@@ -238,8 +213,7 @@ def default_spec(base_motor: Dict) -> RunSpec:
     exit_d = base_motor["nozzle"]["exit"]
     cfg = base_motor["config"]
 
-    # A hundredth of an inch. Finer than that is not a dimension anyone holds
-    # on a mandrel or a reamer, so it is the default rather than an option.
+    # A hundredth of an inch; finer is not held on a mandrel or reamer.
     grid = 0.01 * M_PER_IN
     min_web = 0.25 * M_PER_IN
     throat_length = base_motor["nozzle"].get("throatLength", 0.2 * M_PER_IN)
@@ -251,9 +225,7 @@ def default_spec(base_motor: Dict) -> RunSpec:
                      label="Grain {} core".format(i + 1))
         for i, core in enumerate(cores)
     ]
-    # Bounds follow the case, not the nozzle that happened to be on it. Anchor
-    # them to the old throat and changing the grain size leaves the optimiser
-    # boxed into a nozzle sized for hardware you no longer have.
+    # Bounds follow the case, not the nozzle currently fitted to it.
     variables.append(VariableSpec(
         name="throat", free=True, low=min(throat * 0.5, bore * 0.10),
         high=bore * 0.60, step=grid, fixed_value=throat, unit="m",
@@ -295,12 +267,8 @@ def timestep_bias(base_motor: Dict, search_dt: float, verify_dt: float,
                   metrics=OPTIMISABLE_METRICS) -> Dict[str, float]:
     """How much each metric shifts between search fidelity and verification.
 
-    Peak mass flux is a finite difference, so it grows as the timestep shrinks;
-    total impulse is an integral, so it grows too but for the opposite reason.
-    Pressure and Kn barely move at all. Rather than guessing a safety margin,
-    measure the ratio on the user's own motor and correct the search-time limits
-    by it -- then a design sitting on a limit during the search is still sitting
-    on it after verification, whichever way that metric leans.
+    Measured on the loaded motor rather than guessed, so a design sitting on a
+    limit during the search still satisfies it after verification.
     """
     coarse = simulate_motor(base_motor, timestep=search_dt)
     fine = simulate_motor(base_motor, timestep=verify_dt)
@@ -314,12 +282,10 @@ def timestep_bias(base_motor: Dict, search_dt: float, verify_dt: float,
 
 def build_objective(spec: RunSpec, baseline_metrics,
                     bias: Optional[Dict[str, float]] = None) -> Objective:
-    """Objective and constraints as the user configured them.
+    """Objective and constraints as configured.
 
-    Baseline metric values come along so that objectives in unrelated units can
-    be normalised against each other -- a weight of 1 on impulse then means the
-    same as a weight of 1 on thrust. Limits are restated at search fidelity via
-    ``bias`` so the search is neither optimistic nor needlessly timid.
+    Baselines normalise objectives in unrelated units against each other.
+    ``bias`` restates the limits at search fidelity.
     """
     baselines = {name: float(getattr(baseline_metrics, name, 0.0) or 0.0)
                  for name in OPTIMISABLE_METRICS}
@@ -330,8 +296,7 @@ def build_objective(spec: RunSpec, baseline_metrics,
         ratio = bias.get(spec_c.metric, 1.0)
         if ratio and abs(ratio - 1.0) < 0.25:  # ignore anything implausible
             data["value"] = float(spec_c.value) * ratio
-        # A little extra room on top of the measured shift, since the ratio was
-        # taken on one motor and the search visits many.
+        # Extra room on top of the measured shift.
         data["margin"] = spec_c.margin or SEARCH_SAFETY_MARGIN
         constraints.append(type(spec_c)(**data))
     return Objective(
@@ -341,9 +306,7 @@ def build_objective(spec: RunSpec, baseline_metrics,
     )
 
 
-# ---------------------------------------------------------------------------
-# Results
-# ---------------------------------------------------------------------------
+# --- Results ---
 
 
 @dataclass
@@ -357,8 +320,7 @@ class RunResult:
     sensitivity: List[Dict] = field(default_factory=list)
     stats: Dict = field(default_factory=dict)
     messages: List[str] = field(default_factory=list)
-    #: The configuration this run actually used. Panels draw limit lines from
-    #: it, so editing the form afterwards cannot mislabel a finished result.
+    #: The configuration this run used, so later edits cannot mislabel it.
     spec: Dict = field(default_factory=dict)
 
     def to_dict(self) -> Dict:
@@ -405,12 +367,7 @@ def describe_design(space: DesignSpace, x: np.ndarray, spec: RunSpec,
 
 def _constraint_report(frame: pd.DataFrame, objective: Objective,
                        space: DesignSpace) -> List[Dict]:
-    """Which limits are actually doing the work.
-
-    A constraint nobody comes near is not shaping the answer; one that a large
-    share of good designs sit right up against is the thing to relax if the
-    result disappoints.
-    """
+    """Which limits are actually doing the work."""
     active = [c for c in objective.constraints if c.enabled]
     if not active or not len(frame):
         return []
@@ -436,9 +393,8 @@ def _sensitivity(space: DesignSpace, x: np.ndarray, objective: Objective,
                  spec: RunSpec) -> List[Dict]:
     """How much the leading objective moves if each dimension is nudged.
 
-    A step either way per free dimension -- one grid step where a machining grid
-    is set, otherwise 2% of the range -- so the tornado reflects choices the
-    builder could actually make rather than infinitesimals.
+    One grid step either way where a machining grid is set, otherwise 2% of the
+    range, so the result reflects changes that can actually be machined.
     """
     x = space.canonical_one(np.asarray(x, dtype=float))
     metric = objective.objective_labels[0]
@@ -499,9 +455,7 @@ def _population(history: pd.DataFrame, objective: Objective, space: DesignSpace,
     return frame[columns].to_dict("records")
 
 
-# ---------------------------------------------------------------------------
-# The run itself
-# ---------------------------------------------------------------------------
+# --- The run itself ---
 
 
 def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
@@ -526,8 +480,7 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
     baseline_x = space.from_motor(base_motor)
     result.baseline = describe_design(space, baseline_x, spec, "Your motor",
                                       with_curves=True)
-    # Report the motor as it is, not as the space rounds it -- a baseline that
-    # is off the machining grid should still be shown truthfully.
+    # Report the motor as it is, not as the grid rounds it.
     result.baseline.update({
         "cores": [float(g["properties"]["coreDiameter"]) for g in base_motor["grains"]],
         "throat": float(base_motor["nozzle"]["throat"]),
@@ -543,8 +496,7 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
     history = pd.DataFrame()
     front = pd.DataFrame()
     n_obj = len(spec.enabled_objectives)
-    #: Wall time spent on real simulations only, so the app can quote a rate
-    #: that means something. Surrogate work is deliberately excluded.
+    #: Wall time on real simulations only, excluding surrogate work.
     sim_seconds = 0.0
 
     if spec.mode == "pareto":
@@ -568,10 +520,8 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
         from .optimize import surrogate_pareto
         starts = _seed_designs(dataset, space, objective, baseline_x)
         n_seeds = max(1, int(budget.get("seeds", 1)))
-        # The surrogate is trained once; running NSGA-II against it several times
-        # costs almost nothing and merges the same way the simulator path does.
-        # Without this loop the seed count is silently ignored here and the run
-        # spends one seed's share of the budget instead of all of it.
+        # The surrogate is trained once; searching it again is nearly free.
+        # Without this loop the seed count is ignored on the pareto path.
         fronts = []
         labels = objective.objective_labels
         for index in range(n_seeds):
@@ -637,10 +587,8 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
     result.stats = {
         **result.stats,
         "simulations": int(len(history)),
-        # Only from a window that is purely simulation. A multi-objective
-        # search on the simulator verifies its front at the fine timestep
-        # inside that window, and those runs are not in `history`, so the
-        # ratio would read low and drag every later estimate with it.
+        # Only from a purely-simulation window: a multi-objective search
+        # verifies inside its own timing, and those runs are not in history.
         "sim_rate": (round(len(history) / sim_seconds
                            * (max(spec.search_timestep, 0.002) / 0.01) ** -0.75, 2)
                      if (sim_seconds > 0.5 and len(history)
@@ -664,9 +612,7 @@ def _alternatives(space: DesignSpace, history: pd.DataFrame,
                   count: int = 14) -> pd.DataFrame:
     """The winner plus the best genuinely different designs behind it.
 
-    Deduplicating on the rounded design vector matters: an evolutionary run ends
-    with most of its population clustered on the same motor, and a list of
-    fourteen copies of one answer helps nobody.
+    Deduplicated on the rounded vector, since a run ends clustered on one motor.
     """
     columns = list(space.names)
     rows = [pd.DataFrame([dict(zip(columns, best_x))])]
@@ -697,12 +643,8 @@ def _multi_seed_search(space: DesignSpace, objective: Objective, spec: RunSpec,
                        on_telemetry: TelemetryFn = _noop_telemetry) -> Dict:
     """Several independent searches, merged into one front.
 
-    A genetic search converges on whichever basin its starting population
-    happened to land in, so the same configuration run twice returns different
-    answers -- measured at 6.4% apart on best initial thrust for this motor.
-    Splitting the budget across independent seeds and merging beats spending it
-    all on one search: three 4,800-simulation runs found a better front than a
-    single 14,400-simulation run on the same problem.
+    A genetic search converges on whichever basin it started in, so splitting
+    the budget across seeds and merging beats spending it all on one search.
     """
     n_seeds = max(1, int(budget.get("seeds", 1)))
     fronts, histories, per_seed = [], [], []
@@ -750,7 +692,6 @@ def _multi_seed_search(space: DesignSpace, objective: Objective, spec: RunSpec,
 
     combined = pd.concat(fronts, ignore_index=True) if fronts else pd.DataFrame()
     if len(combined) and n_obj > 1:
-        # Merge, then take the non-dominated set of everything any seed found.
         combined = combined.iloc[pareto_indices(-objective.matrix(combined))]
         combined = combined.reset_index(drop=True)
     return {"front": combined,

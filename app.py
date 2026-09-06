@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 """Starts Lior's Really Good™ Rocket Optimizer and opens it in a browser.
 
-Run it with `python app.py`. On a machine that has never run it before it offers
-to build the environment first, then starts itself inside it -- so this is the
-only command anybody needs.
+On a machine that has never run it, it offers to build the environment first
+and then starts itself inside it.
 """
 import os
 import socket
@@ -34,24 +33,17 @@ def ready() -> bool:
 def relaunch_in_environment() -> None:
     """Builds the environment if needed, then re-runs this file inside it.
 
-    Handing over to a separate interpreter rather than importing across them:
-    the app then runs under the environment's own Python, with nothing of the
-    outer one's import state carried in.
-
-    Through subprocess and not os.execv. On Windows os.exec* goes through the
-    MS C runtime, which flattens the argument list into one string for the child
-    to re-parse, so any argument containing a space is torn apart -- a path like
-    C:\My Things\School\Rocket Club\... reaches the child as three arguments
-    and it opens none of them. subprocess quotes properly on every platform.
+    Through subprocess, not os.execv: on Windows os.exec* flattens the argument
+    list into one string for the child to re-parse, so a path containing spaces
+    arrives torn into several arguments.
     """
     import subprocess
 
     import bootstrap
 
     python = bootstrap.ensure(ROOT, assume_yes="--yes" in sys.argv or "-y" in sys.argv)
-    # Compared by prefix, not by resolving the paths: a venv's bin/python is a
-    # symlink to the interpreter it was built from, so resolve() makes the two
-    # look like the same file and the handover never happens.
+    # By prefix, not resolved path: a venv's bin/python is a symlink to the
+    # interpreter it was built from, so resolve() makes them look identical.
     if sys.prefix == str(ROOT / ".venv"):
         raise SystemExit("The environment is built but still incomplete.")
     print("\n  Starting under {}\n".format(os.path.relpath(python, ROOT)))
@@ -65,12 +57,10 @@ def relaunch_in_environment() -> None:
 
 
 def open_browser(url: str) -> None:
-    """Opens the app, quietly falling back to whatever the platform offers.
+    """Opens the app, falling back to whatever the platform offers.
 
-    webbrowser.open returns False rather than raising when it cannot find a
-    browser, and on Windows it can fail outright from a process started by
-    another process. Either way the server is running and the address is on
-    screen, so a failure here is worth nothing more than silence.
+    webbrowser.open returns False rather than raising, and can fail outright on
+    Windows from a process started by another. The address is on screen anyway.
     """
     try:
         if webbrowser.open(url):
@@ -105,9 +95,7 @@ def main() -> None:
 
     url = "http://{}:{}".format(HOST, PORT)
 
-    # Checked before starting, because uvicorn's failure to bind is a traceback
-    # about an address, which reads as the app being broken rather than as
-    # another copy of it already running.
+    # Checked first: uvicorn's bind failure is a traceback about an address.
     if not port_is_free(HOST, PORT):
         raise SystemExit(
             "\n  Something is already using port {}.\n"
@@ -127,9 +115,7 @@ def main() -> None:
           "\n"
           "  Leave this window open while you use it. Ctrl-C here stops the app.\n"
           .format(url))
-    # Flushed so the address is on screen before uvicorn starts: stdout is
-    # block-buffered when the output is piped or captured, and a library
-    # warning on unbuffered stderr would otherwise print above it.
+    # Flushed so the address lands before any stderr warning from startup.
     sys.stdout.flush()
     uvicorn.run("app.server:app", host=HOST, port=PORT, log_level="warning")
 

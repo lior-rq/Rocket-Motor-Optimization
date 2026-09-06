@@ -1,17 +1,11 @@
 """Optimisers over the motor design space.
 
-Three of them, because they answer different questions:
-
-* :func:`direct_search` runs a genetic algorithm against openMotor itself. It
-  needs thousands of simulations but its answer is ground truth, so it is the
-  yardstick the learned methods are measured against.
-* :func:`bayes_optimize` fits a Gaussian process to the designs it has seen and
-  spends each new simulation where expected improvement is highest. This is the
-  sample-efficient option -- it is trying to find the same optimum in far fewer
-  burns.
-* :func:`surrogate_pareto` runs NSGA-II entirely against the trained surrogate,
-  which is fast enough to map the whole initial-thrust/impulse trade-off, then
-  re-simulates every point on the front so nothing reported is model output.
+* :func:`direct_search` runs a genetic algorithm against openMotor itself.
+  Expensive, but its answer is ground truth.
+* :func:`bayes_optimize` fits a Gaussian process and spends each simulation
+  where expected improvement is highest.
+* :func:`surrogate_pareto` runs NSGA-II against the trained surrogate, then
+  re-simulates the front so nothing reported is model output.
 """
 
 from __future__ import annotations
@@ -40,12 +34,8 @@ PA_PER_PSI = 6894.757293168361
 class Objective:
     """What counts as better, and what may never be exceeded.
 
-    Two modes share one class so the study scripts and the app can use the same
-    optimisers. Left alone it behaves as it always has: a weighted blend of
-    initial thrust and total impulse, each divided by the baseline motor's value
-    so the weights are dimensionless and mean what they say. Give it
-    ``objectives``/``constraints`` and it instead follows whatever the user
-    picked in the GUI.
+    Left alone, a weighted blend of initial thrust and total impulse normalised
+    against the baseline. Given ``objectives``/``constraints``, it follows those.
     """
 
     thrust_weight: float = 0.7
@@ -54,11 +44,8 @@ class Objective:
     baseline_impulse: float = 1.0
     #: Fraction of the pressure limit the design is allowed to reach.
     pressure_fraction: float = 1.0
-    #: Search-time safety margin on the mass flux limit only. Peak mass flux is
-    #: a finite-difference quantity, so it creeps up as the timestep shrinks
-    #: (~1.5% from 0.02 s to 0.002 s) while pressure and Kn are timestep
-    #: invariant. Searching against a slightly tighter flux limit keeps designs
-    #: that sit on the boundary from failing when they are finally verified.
+    #: Search-time margin on mass flux only, which creeps up as the timestep
+    #: shrinks (~1.5%) while pressure and Kn do not.
     flux_margin: float = 0.0
 
     #: User-chosen goals and limits. Empty tuples mean the legacy behaviour.
@@ -89,9 +76,7 @@ class Objective:
     def _normalise(self, frame: pd.DataFrame, spec) -> np.ndarray:
         """One objective as a quantity to maximise, scaled to roughly unity.
 
-        Dividing by the baseline motor's value puts every goal on the same
-        footing, so a weight of 1.0 on impulse really does mean the same as a
-        weight of 1.0 on thrust despite the units being unrelated.
+        Divided by the baseline so weights mean the same across units.
         """
         values = frame[spec.metric].to_numpy(dtype=float)
         reference = abs(self.baselines.get(spec.metric) or 0.0)
@@ -133,12 +118,8 @@ def scale_constraints(frame: pd.DataFrame, objective: Objective,
                       space: DesignSpace) -> np.ndarray:
     """Constraint matrix in ``g <= 0`` form, recomputed from raw metrics.
 
-    Deliberately ignores any stored ``g_*`` columns. Those are written at
-    sampling time against whatever envelope was in force then, so a dataset
-    assembled across two different envelopes carries constraint values that
-    disagree with each other -- and merging it would silently admit designs at
-    nearly double the current flux limit. Deriving from the measured
-    quantities against the live space makes that failure impossible.
+    Stored ``g_*`` columns are ignored: written against whatever envelope was in
+    force at sampling time, they silently admit designs from a looser one.
     """
     n = len(frame)
     if objective.constraints:
@@ -163,12 +144,7 @@ def scale_constraints(frame: pd.DataFrame, objective: Objective,
 
 
 def _spec_constraints(frame: pd.DataFrame, constraints) -> np.ndarray:
-    """User-chosen limits, normalised so their magnitudes are comparable.
-
-    Each is expressed as a fractional overshoot of its own limit, which lets
-    pymoo weigh a pressure violation against a mass-flux one without either
-    drowning the other just because pascals are big numbers.
-    """
+    """User-chosen limits as fractional overshoot, so magnitudes are comparable."""
     active = [c for c in constraints if getattr(c, "enabled", True)]
     n = len(frame)
     if not active:
@@ -228,9 +204,7 @@ class _SimulatorProblem(Problem):
         frame = evaluate_batch(self.space, X, timestep=self.timestep,
                                workers=self.workers, pool=self.pool)
         self.history.append(frame)
-        # Kept so a per-generation callback can report what the population
-        # actually is, in real units, without re-deriving it from pymoo's
-        # normalised objective matrix.
+        # Kept so the per-generation callback can report real units.
         self.last_frame = frame
         if self.n_obj == 1:
             score = self.objective.score_frame(frame)
@@ -255,13 +229,10 @@ def direct_search(
     callback=None,
     seed_designs: Optional[np.ndarray] = None,
 ) -> Dict:
-    """Genetic search straight against the simulator -- the reference answer.
+    """Genetic search straight against the simulator: the reference answer.
 
-    ``seed_designs`` plants known-good motors in the starting population. With
-    several constraints binding at once the feasible region can be thin enough
-    that a purely random start spends most of its budget finding its way inside,
-    and a run seeded with the user's existing motor cannot come back worse than
-    what they already have.
+    ``seed_designs`` plants known-good motors in the starting population, since
+    a thin feasible region can consume most of a random start's budget.
     """
     history: List[pd.DataFrame] = []
     with SimulationPool(space, timestep=timestep, workers=workers) as pool:
@@ -300,11 +271,8 @@ def direct_pareto(
 ) -> Dict:
     """NSGA-II against openMotor itself, no surrogate in the loop.
 
-    A BATES burn costs about ten milliseconds, so for a handful of objectives
-    the simulator can supply a front directly -- no dataset, no training wait.
-    The winners are still re-simulated at the fine timestep, because peak mass
-    flux drifts with timestep and a design sitting on that limit would otherwise
-    be reported as feasible when it is not.
+    A BATES burn is cheap enough to supply a front directly. Winners are still
+    re-simulated at the fine timestep, since mass flux drifts with it.
     """
     history: List[pd.DataFrame] = []
     n_obj = objective.n_obj if objective.objectives else 2
@@ -343,9 +311,7 @@ def direct_pareto(
             "n_simulations": len(evaluated)}
 
 
-# --------------------------------------------------------------------------
-# Bayesian optimisation
-# --------------------------------------------------------------------------
+# --- Bayesian optimisation ---
 
 
 def _fit_gp(X: np.ndarray, y: np.ndarray, seed: int = 0) -> GaussianProcessRegressor:
@@ -372,10 +338,8 @@ def bayes_optimize(
 ) -> Dict:
     """Constrained Bayesian optimisation with expected improvement.
 
-    Two Gaussian processes are fitted each round: one on the objective, one on
-    the worst constraint violation. The acquisition is expected improvement
-    weighted by the probability that a design is actually feasible, so the
-    search does not waste burns on motors that would burst the case.
+    Two Gaussian processes per round, one on the objective and one on the worst
+    violation, with the acquisition weighted by probability of feasibility.
     """
     rng = np.random.default_rng(seed)
     lower, upper = space.lower, space.upper
@@ -448,9 +412,7 @@ def best_design(frame: pd.DataFrame, space: DesignSpace,
     return space.canonical_one(frame.iloc[winner][space.names].to_numpy(dtype=float))
 
 
-# --------------------------------------------------------------------------
-# Multi-objective front on the surrogate
-# --------------------------------------------------------------------------
+# --- Multi-objective front on the surrogate ---
 
 
 class _SurrogateProblem(Problem):
@@ -481,8 +443,7 @@ class _SurrogateProblem(Problem):
                 predicted["avg_pressure"] = features["pressure_0"].to_numpy()
             out["F"] = self.objective.matrix(predicted)
             out["G"] = scale_constraints(predicted, self.objective, self.space)
-            # Kept for the per-generation callback, exactly as the simulator
-            # problem does it -- these are predictions, not simulations, and
+            # As the simulator problem does it. These are predictions, and
             # the snapshot is flagged as such.
             self.last_frame = predicted
             return
@@ -518,21 +479,14 @@ def surrogate_pareto(
     reference: Optional[pd.DataFrame] = None,
     callback=None,
 ) -> Dict:
-    """Maps the initial-thrust / impulse trade-off, then verifies it.
+    """Maps the trade-off against the surrogate, then verifies it.
 
-    NSGA-II is run against the surrogate because a dense front needs far more
-    evaluations than the simulator could supply. Every surviving design is then
-    re-simulated at a fine timestep, and the front is recomputed from those real
-    numbers -- so model error can cost us a good design, but can never put a
-    design on the reported front that does not deserve to be there.
+    Survivors are re-simulated and the front recomputed from real numbers, so
+    model error can lose a good design but never promote a bad one.
 
-    Two safeguards against an under-converged front. ``seed_designs`` puts
-    known-good motors into the initial population, and ``reference`` -- already
-    simulated designs, typically the sampled dataset -- is merged in before the
-    non-dominated set is taken. Together they guarantee the reported front is
-    never worse than something we already had, which a plain NSGA-II run does
-    not: at a tight pressure cap the feasible region is thin and the search can
-    miss the knee entirely.
+    ``seed_designs`` and ``reference`` (already-simulated designs) are merged in
+    before the non-dominated set is taken, so the front is never worse than what
+    was already known.
     """
     problem = _SurrogateProblem(space, surrogate, objective)
     if seed_designs is not None and len(seed_designs):

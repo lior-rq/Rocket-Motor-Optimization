@@ -1,14 +1,8 @@
 """Builds the technical report for one or more optimisation runs.
 
-Everything here is derived from the runs themselves -- the hardware from the
-motor, the limits and free variables from the spec, the findings from the
-results. Nothing about any particular motor is written into this file, so the
-same code produces the report for a 3-inch case, a 5-inch case, or a run that
-found nothing at all.
-
-A run that comes back empty gets the most attention, because "no answer" is a
-result and the useful thing is *why*: which limit could never be met, how close
-anything got, and what would have to change.
+Everything is derived from the runs themselves, so nothing about any particular
+motor is written into this file. An empty run gets the most attention: which
+limit could never be met, how close anything got, and what would change that.
 """
 
 from __future__ import annotations
@@ -87,9 +81,7 @@ class ReportRun:
         return [v.name for v in self.spec.variables if v.free]
 
 
-# ---------------------------------------------------------------------------
-# Display helpers
-# ---------------------------------------------------------------------------
+# --- Display helpers ---
 
 
 def inches(value: float, places: int = 2) -> str:
@@ -97,10 +89,9 @@ def inches(value: float, places: int = 2) -> str:
 
 
 def inches_exact(value: float) -> str:
-    """Two places when the value sits on the machining grid, four when it does not.
+    """Two places on the machining grid, four off it.
 
-    A dimension held at 1.2953 in should not be reported as 1.30 -- that is the
-    number someone would then go and cut.
+    1.2953 in reported as 1.30 is the number someone would then cut.
     """
     shown = value / IN
     return "{:.2f}".format(shown) if abs(shown * 100 - round(shown * 100)) < 1e-6 \
@@ -108,11 +99,7 @@ def inches_exact(value: float) -> str:
 
 
 def collapse(variables) -> list:
-    """Groups the per-grain cores into one row when they share bounds.
-
-    Six identical lines say nothing six times; one line that says "x 6" says it
-    once and leaves room for what differs.
-    """
+    """Groups the per-grain cores into one row when they share bounds."""
     cores = [v for v in variables if v.name.startswith("core")]
     rest = [v for v in variables if not v.name.startswith("core")]
     out = []
@@ -150,10 +137,9 @@ def esc(text) -> str:
 
 
 def pick_options(designs: Sequence[Dict], count: int = N_OPTIONS) -> List[Dict]:
-    """Designs spread evenly along the leading objective, not just the best few.
+    """Designs spread along the leading objective, not just the best few.
 
-    Taking the top N off a front returns N variations on one motor; spacing them
-    across the range is what makes the trade visible.
+    The top N off a front are N variations on one motor.
     """
     if len(designs) <= count:
         return list(designs)
@@ -180,17 +166,14 @@ def balanced_index(options: Sequence[Dict], metrics: Sequence[str]) -> int:
     return int(np.argmax(scores))
 
 
-# ---------------------------------------------------------------------------
-# Diagnosing a run that found nothing
-# ---------------------------------------------------------------------------
+# --- Diagnosing a run that found nothing ---
 
 
 def diagnose(run: ReportRun, base_motor: Dict) -> Dict:
     """Why an empty run was empty, in terms a builder can act on.
 
-    Reports the limit that nothing could satisfy, how close the best attempt
-    came, and -- for a BATES stack, where burning area is closed-form -- whether
-    the geometry can meet the Kn limit at any core diameter at all.
+    The limit nothing satisfied, how close the best attempt came, and whether
+    the geometry can meet Kn at any core diameter.
     """
     space = build_space(run.spec, base_motor)
     population = run.result.get("population", [])
@@ -220,10 +203,8 @@ def diagnose(run: ReportRun, base_motor: Dict) -> Dict:
 def _kn_sweep(space: DesignSpace, spec: RunSpec) -> Optional[Dict]:
     """Kn at ignition against a uniform core diameter, with the throat held.
 
-    Only meaningful when the throat is not being searched -- if the optimiser
-    can open the throat, no core diameter is inherently out of reach. Burning
-    area is closed-form for BATES, so this costs nothing and answers the
-    question the search can only answer by exhaustion.
+    Only meaningful with the throat fixed: a throat that can open puts no core
+    diameter out of reach.
     """
     throat_free = any(v.name == "throat" and v.free for v in spec.variables)
     kn_limit = next((c.value for c in spec.enabled_constraints
@@ -261,9 +242,7 @@ def _kn_sweep(space: DesignSpace, spec: RunSpec) -> Optional[Dict]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Figures
-# ---------------------------------------------------------------------------
+# --- Figures ---
 
 
 def make_figures(runs: Sequence[ReportRun], base_motor: Dict,
@@ -379,9 +358,7 @@ def data_uri(path: Path) -> str:
     return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode()
 
 
-# ---------------------------------------------------------------------------
-# The document
-# ---------------------------------------------------------------------------
+# --- The document ---
 
 
 def build_report(runs: Sequence[ReportRun], base_motor: Dict, out_dir: Path,
@@ -412,11 +389,8 @@ def build_report(runs: Sequence[ReportRun], base_motor: Dict, out_dir: Path,
     document = "<title>{}</title>\n{}\n<style>{}</style>\n<div class=\"wrap\">{}</div>".format(
         esc(title), FONT_LINK, CSS, "\n".join(body))
 
-    # A report is a document people file and email, so the artefact is a PDF and
-    # the PDF is the only thing left behind. The HTML is scaffolding -- figures
-    # are embedded in it as data URIs, so neither it nor the PNGs beside it are
-    # needed once it has been rendered, and leaving them turns the folder into a
-    # pile of near-duplicates of the same document.
+    # Only the PDF is kept. Figures are embedded as data URIs, so the HTML and
+    # the PNGs beside it are scaffolding once it has rendered.
     source = staging / "report.html"
     source.write_text(document)
     try:

@@ -1,26 +1,19 @@
-"""The design space: what the optimiser is allowed to change, and how a design
-vector turns into an openMotor motor.
+"""The design space, and how a design vector becomes an openMotor motor.
 
-The case is treated as fixed hardware -- grain outer diameter, grain count,
-grain lengths and the propellant all come from the baseline .ric and are never
-touched. What is free is the core diameter of each grain plus the nozzle throat
-and exit diameters, and any of those may be frozen or restricted to a machining
-grid by the caller.
+Grain outer diameter, count, lengths and the propellant come from the baseline
+.ric and are never touched. Free are the core diameters and the nozzle throat,
+exit and throat length.
 
-Three simplifications collapse the search space without giving anything up:
+Three simplifications collapse the space:
 
-* **Cores are stored sorted, smallest forward.** Grain order changes nothing in
-  openMotor's model except mass flux and port/throat ratio, and both of those
-  are best when the largest port sits at the aft end. So the sorted arrangement
-  dominates every permutation of the same six diameters, and searching only
-  sorted vectors removes a 6! = 720-fold degeneracy. ``verify_ordering.py``
-  checks this claim against the simulator.
-* **Frozen dimensions leave the search vector entirely.** A dimension pinned to
-  one value is not a variable with a zero-width range -- the evolutionary
-  operators divide by range -- so it is removed and reinserted on the way out.
-* **Exit diameter is parameterised as a fraction** of the span between a
-  slightly-supersonic throat and the largest nozzle that fits the airframe.
-  That keeps the space a plain box while guaranteeing exit > throat.
+* Cores are stored sorted, smallest forward. Order affects only mass flux and
+  port/throat, both best with the largest port aft, so the sorted arrangement
+  dominates and a 720-fold degeneracy disappears. ``verify_ordering.py`` checks
+  this against the simulator.
+* Frozen dimensions leave the vector entirely, since the evolutionary operators
+  divide by range.
+* Exit is a fraction of the span above the throat, which keeps the space a box
+  while guaranteeing exit > throat.
 """
 
 from __future__ import annotations
@@ -50,13 +43,9 @@ class Variable:
 class SpaceConfig:
     """Bounds for the free variables, plus the operating envelope.
 
-    The ``max_*``/``min_port_throat`` fields override whatever the baseline .ric
-    carries, so a tighter envelope than openMotor's own warning thresholds can be
-    imposed without editing the motor file.
-
-    This is the convenience path used by the study scripts. The app builds an
-    explicit list of :class:`~rocketopt.spec.VariableSpec` instead, which can
-    additionally freeze individual dimensions.
+    The ``max_*`` fields override the baseline .ric. The app builds an explicit
+    list of :class:`~rocketopt.spec.VariableSpec` instead, which can also freeze
+    individual dimensions.
     """
 
     core_min: float = 0.020
@@ -68,13 +57,11 @@ class SpaceConfig:
     #: Absolute floor on exit diameter, on top of the throat ratio. Zero leaves
     #: the ratio in sole charge.
     exit_min: float = 0.0
-    #: Hold the exit at one diameter while the throat still moves. A frozen
-    #: *fraction* would not do this -- the fraction spans throat*ratio to the
-    #: airframe limit, so it maps to a different diameter for every throat.
+    #: Hold the exit diameter while the throat moves. Freezing the fraction
+    #: would not do this: it maps to a different diameter for every throat.
     exit_fixed: Optional[float] = None
-    #: Below roughly this chamber pressure a composite propellant chuffs or
-    #: extinguishes rather than burning steadily. openMotor will happily
-    #: simulate a 96 psi motor; a real one would not fly.
+    #: Below this chamber pressure a composite propellant chuffs or goes out,
+    #: whatever openMotor simulates.
     min_chamber_pressure: float = 200 * 6894.757293168361
 
     # --- machining grids; 0 means any value is acceptable -------------------
@@ -83,11 +70,8 @@ class SpaceConfig:
     exit_step: float = 0.0
     throat_length_step: float = 0.0
 
-    #: Nozzle throat length. Off by default so the study scripts keep the
-    #: 8-variable space their saved surrogate was trained against; the app
-    #: turns it on. Shorter is always better in openMotor's model -- the loss
-    #: term is monotonic in throat aspect ratio -- so the useful answer is the
-    #: lower bound the builder is willing to machine.
+    #: Nozzle throat length, off by default. Shorter is always better in
+    #: openMotor's model, so the answer is whatever lower bound is machinable.
     include_throat_length: bool = False
     throat_length_min: float = 0.0
     throat_length_max: float = 0.0
@@ -100,9 +84,7 @@ class SpaceConfig:
     #: but Kn is what a builder actually designs to.
     max_kn: Optional[float] = None
 
-    #: Minimum increase in core diameter from one grain to the next going aft.
-    #: Zero permits equal cores; a positive value forces a strictly widening
-    #: port so mass flow never meets a narrower passage downstream.
+    #: Minimum core increase going aft. Zero permits equal cores.
     min_core_step: float = 0.0
     #: Group sizes for grains that must share a core diameter, e.g. (2, 2, 2)
     #: for three mandrel sizes used in pairs. None leaves every grain free.
@@ -206,9 +188,7 @@ class DesignSpace:
     def worker_spec(self):
         """(class, kwargs) needed to rebuild this space in a worker process.
 
-        Subclasses and spec-driven spaces take extra constructor arguments, so
-        the pool cannot assume the base class with default variables -- doing so
-        gives workers a space with the wrong number of variables.
+        Assuming the base class gives workers the wrong number of variables.
         """
         return type(self), {"base_motor": self.base, "config": self.config,
                             "variables": self.specs, "ordering": self.ordering}
@@ -259,8 +239,7 @@ class DesignSpace:
     def canonicalize(self, x: np.ndarray) -> np.ndarray:
         """Puts a searched vector into its single canonical form.
 
-        Every design has exactly one canonical form, so the dataset and the
-        surrogate never see the same motor under 720 different labels.
+        One form per design, so the surrogate never sees one motor twice.
         """
         return self.contract(self.canonical_full(self.expand(x)))
 
@@ -288,14 +267,10 @@ class DesignSpace:
         return self.canonicalize(x)[0]
 
     def _snap_exit(self, throat: np.ndarray, frac: np.ndarray) -> np.ndarray:
-        """Snaps the exit *diameter* to its grid and re-solves the fraction.
+        """Snaps the exit diameter to its grid and re-solves the fraction.
 
-        The stored variable is a fraction of the span between the smallest
-        useful exit and the airframe limit, but nobody machines a fraction. So
-        the diameter is snapped and the fraction that reproduces it is stored
-        back, which also keeps the canonical form unique -- otherwise many
-        fractions would map to one motor and the surrogate would see the same
-        design under different labels.
+        Nobody machines a fraction, and snapping it back keeps the canonical
+        form unique.
         """
         step = self.specs[self.slot["exit_frac"]].step
         if not step or step <= 0 or self.config.exit_fixed is not None:
@@ -308,10 +283,8 @@ class DesignSpace:
     def _arrange_cores(self, cores: np.ndarray) -> np.ndarray:
         """Applies ordering, grouping, the machining grid and the ladder.
 
-        Order of operations matters. Grouping averages, which lands off-grid, so
-        snapping follows it rather than preceding it. The ladder is applied last
-        because its rung is already a whole number of grid steps, so walking it
-        keeps every core on the grid.
+        Grouping averages and lands off-grid, so snapping follows it. The
+        ladder is last: its rung is a whole number of steps, so it stays on grid.
         """
         cores = cores.copy()
         lo = self.specs[0].low
@@ -325,9 +298,8 @@ class DesignSpace:
                 # All cores free: sorting is the provably optimal arrangement.
                 cores = np.sort(cores, axis=1)
             else:
-                # With some cores pinned, sorting would move a value out of the
-                # slot the user pinned it to. Push only the free ones up to
-                # their left neighbour instead.
+                # Sorting would move a pinned core out of its slot, so push
+                # only the free ones up to their neighbour.
                 for i in range(1, cores.shape[1]):
                     if core_free[i]:
                         cores[:, i] = np.maximum(cores[:, i], cores[:, i - 1])
@@ -355,13 +327,10 @@ class DesignSpace:
     @staticmethod
     def _ladder(cores: np.ndarray, step: float, lo: float, hi: float,
                 grid: float = 0.0) -> np.ndarray:
-        """Forces each core to exceed the one ahead of it by at least ``step``.
+        """Forces each core to exceed the one ahead by at least ``step``.
 
-        Pushing the ladder up can run past the upper bound, so the whole vector
-        slides back down by the overshoot and the pass is repeated -- the bounds
-        are wide enough for the ladder to fit, so the second pass always lands
-        inside them. When a machining grid is in force the slide is rounded up
-        to a whole number of steps, so the ladder never falls off the grid.
+        Overshooting the upper bound slides the whole vector back down and
+        repeats, rounded to whole grid steps so the ladder stays on the grid.
         """
         cores = cores.copy()
         for _ in range(2):
@@ -450,10 +419,7 @@ class DesignSpace:
     def features(self, x: np.ndarray) -> np.ndarray:
         """Physics-derived features for one or many design vectors.
 
-        These are all closed-form BATES quantities, so they cost nothing next to
-        a simulation. Giving the surrogate ``kn_0`` in particular means it does
-        not have to rediscover that initial pressure is set by burn area over
-        throat area.
+        Closed-form BATES quantities, so the surrogate need not rediscover them.
         """
         X = self.canonical_full(self.expand(np.atleast_2d(np.asarray(x, dtype=float))))
         cores = X[:, : self.n_grains]

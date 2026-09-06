@@ -1,8 +1,7 @@
 """Read and write openMotor ``.ric`` motor files.
 
-openMotor's own loader lives in ``uilib.fileIO``, which imports PyQt. We only
-need the YAML payload, so this module reproduces the file's two Python-specific
-tags directly and stays headless.
+openMotor's own loader imports PyQt. Only the YAML payload is needed, so the
+file's two Python-specific tags are reproduced here instead.
 """
 
 from __future__ import annotations
@@ -75,18 +74,14 @@ for _np_type in (np.float32, np.int32, np.int16, np.bool_):
     )
 
 
-#: Where the motor lives. Whatever .ric sits here is the motor being optimised --
-#: no file name is special, and nothing in this project names one. Singular
-#: because one motor is optimised at a time, which is what motor_path assumes.
+#: Whatever .ric sits here is the motor being optimised. No name is special.
 MOTOR_DIR = ("motor",)
 
 
 def motor_path(root: Path) -> Path:
     """The motor to work on: whatever .ric is in the motor folder.
 
-    Drop a file in and it is the one that gets optimised. If several are there
-    the newest wins, since that is the one you just put in, and the app names
-    the file it opened so there is never a question which.
+    If several are present the newest wins, and the app names the one it opened.
     """
     found = find_motors(root)
     if not found:

@@ -1,14 +1,7 @@
 """Builds the environment this app needs, on a machine that has none of it.
 
-Two rules shape everything here.
-
-**It never installs into the interpreter you happened to run.** Everything goes
-into ``.venv`` beside this file. Silently adding a dozen packages to somebody's
-system Python is not a convenience, it is a mess someone else has to clean up.
-
-**It asks first.** Installing software is a change to your machine, so it says
-what it is about to do and waits, unless you pass ``--yes`` or run
-``scripts/setup_env.sh``, which is the same thing with the answer already given.
+Two rules. It never installs into the interpreter it was run with, only into
+``.venv`` beside this file. And it asks first, unless given ``--yes``.
 
 Standard library only: it has to run before anything is installed.
 """
@@ -34,13 +27,9 @@ OPENMOTOR_COMMIT = "0dfb3f1dd4f843499c7f71dc85a3dfde5dd15c6a"
 REQUIRED = ("fastapi", "uvicorn", "numpy", "pandas", "pymoo", "sklearn",
             "matplotlib", "plotly", "motorlib.motor")
 
-#: The pinned dependency set publishes wheels for these versions and no others
-#: -- numpy 1.26, scipy 1.13 and scikit-image 0.24 all stop at cp312. PyPI
-#: metadata says only ">=3.9", with no upper bound, so on a newer Python pip
-#: does not refuse: it tries to compile numpy from source, which fails on a
-#: machine without a full C/Fortran toolchain and buries the reason in a meson
-#: log. Refusing up front, with the version to install, is the whole point of
-#: this check.
+#: numpy 1.26, scipy 1.13 and scikit-image 0.24 publish wheels to cp312 only.
+#: PyPI records no upper bound, so on 3.13 pip tries to compile numpy from
+#: source and fails with a meson error that never mentions the Python version.
 MIN_PYTHON = (3, 9)
 MAX_PYTHON = (3, 12)
 
@@ -71,10 +60,9 @@ def supported(version: Optional[tuple]) -> bool:
 
 
 def find_supported_python() -> Optional[List[str]]:
-    """A command on this machine whose Python the pinned wheels cover.
+    """A command whose Python the pinned wheels cover.
 
-    Returns the command as a list, because the Windows launcher takes the
-    version as an argument rather than being a differently named executable.
+    A list, since the Windows launcher takes the version as an argument.
     """
     if supported(sys.version_info[:2]):
         return [sys.executable]
@@ -137,12 +125,7 @@ def missing_prerequisites() -> List[str]:
 
 def _run(command, cwd: Optional[Path] = None, what: str = "",
          quiet: bool = True) -> None:
-    """Runs a build step, showing its output only when it fails.
-
-    Compiling openMotor's extension prints several hundred lines of clang
-    invocation. That is noise when it works and the only useful thing when it
-    does not, so it is held back and printed on failure.
-    """
+    """Runs a build step, showing its output only when it fails."""
     print("  {}".format(what or " ".join(str(c) for c in command)))
     result = subprocess.run(
         command, cwd=str(cwd) if cwd else None,
@@ -154,27 +137,18 @@ def _run(command, cwd: Optional[Path] = None, what: str = "",
         raise subprocess.CalledProcessError(result.returncode, command)
 
 
-#: openMotor's one compiled module. mathlib/__init__ imports it, and
-#: motorlib/grain.py imports mathlib, so motorlib cannot be imported at all
-#: without it -- but nothing in a BATES burn ever calls into it. Measured: a
-#: full verification-timestep simulation calls _get_perimeter zero times. It
-#: walks contours of a regression map, which is how the level-set grain types
-#: (finocyl, star, X-core) find their perimeter. This app does BATES.
-#:
-#: So with no compiler, this stands in: enough to satisfy the import, and an
-#: immediate explicit failure if a geometry that genuinely needs it reaches
-#: here. Substituting silence for the real thing would be worse than not
-#: running at all.
+#: motorlib cannot be imported without openMotor's one compiled module, but a
+#: BATES burn never calls into it (measured: zero calls). It walks regression
+#: map contours, which is how the level-set geometries find their perimeter.
+#: This stands in far enough to satisfy the import, and raises if reached.
 PERIMETER_SHIM = '"""Pure-Python stand-in for openMotor\'s compiled perimeter finder.\n\nWritten by this project\'s bootstrap when no C compiler was available to\nbuild the real one. It exists so motorlib can be imported. BATES motors\nnever call into it; grain geometries that walk a regression map do, and\nthey fail here rather than quietly return a wrong number.\n"""\n\n\ndef _get_perimeter(*args, **kwargs):\n    raise NotImplementedError(\n        "This grain geometry needs openMotor\'s compiled perimeter finder, "\n        "which was not built because no C compiler was available. BATES "\n        "grains do not need it. To use the others, install a compiler and "\n        "re-run setup: macOS \'xcode-select --install\', Debian \'apt install "\n        "build-essential python3-dev\', Windows \'Microsoft C++ Build Tools\'."\n    )\n'
 
 
 def write_perimeter_shim(vendor: Path, log: Optional[Path] = None) -> None:
     """Lets the app run without a compiler, for the grains it supports.
 
-    The wording matters. An earlier version of this notice opened with what had
-    failed and mentioned a compiler three times, and people read it as an
-    instruction to go and install one -- including someone who already had. It
-    leads with the outcome now, because the outcome is that nothing is wrong.
+    The notice leads with the outcome: an earlier version opened with the
+    failure and was read as an instruction to install a compiler.
     """
     target = vendor / "mathlib" / "_find_perimeter_cy.py"
     target.write_text(PERIMETER_SHIM)
@@ -193,9 +167,7 @@ def build(root: Path = ROOT) -> Path:
     """Creates the environment. Returns the interpreter to run the app with."""
     python = venv_python(root)
 
-    # A .venv left over from an attempt on an unsupported Python is worse than
-    # none: its interpreter is the wrong version, and installing into it fails
-    # exactly the way it failed the first time. Replace it rather than reuse it.
+    # A .venv from an unsupported Python fails the same way twice. Replace it.
     existing = version_of(python) if python.exists() else None
     if existing and not supported(existing):
         print("  replacing .venv, which was built with Python {}.{}".format(*existing))
@@ -237,12 +209,9 @@ def build(root: Path = ROOT) -> Path:
     _run(["git", "-C", str(vendor), "checkout", "--quiet", OPENMOTOR_COMMIT],
          what="pinning openMotor to {}".format(OPENMOTOR_COMMIT[:7]))
 
-    # motorlib ships a Cython extension whose setup.py is too old for pip to
-    # install editable, so build it in place and put it on the path with a .pth.
-    # Run directly rather than through _run: when this step fails the app is
-    # fine without it, so its output is not something to flood the terminal
-    # with. Hundreds of lines of compiler errors followed by "nothing is wrong"
-    # reads as a disaster however the note underneath is worded.
+    # Built in place and put on the path with a .pth, since its setup.py is too
+    # old for an editable install. Run directly rather than through _run: the
+    # app is fine without it, so its failure should not flood the terminal.
     print("  building openMotor's native extension")
     attempt = subprocess.run(
         [str(python), "setup.py", "build_ext", "--inplace"], cwd=str(vendor),
@@ -283,10 +252,8 @@ def ensure(root: Path = ROOT, assume_yes: bool = False,
            force: bool = False) -> Path:
     """Returns a ready interpreter, building the environment if needed.
 
-    ``force`` rebuilds even when the environment imports cleanly. The readiness
-    check only proves the modules it knows about are present, so it cannot see a
-    new line in requirements.txt -- which is exactly what someone re-running the
-    setup script is usually trying to pick up.
+    ``force`` rebuilds even when imports succeed, since the readiness check
+    cannot see a dependency added to requirements.txt.
     """
     python = venv_python(root)
     if can_import(python) and not force:

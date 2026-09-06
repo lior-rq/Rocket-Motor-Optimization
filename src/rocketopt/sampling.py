@@ -116,9 +116,8 @@ def evaluate_batch(
         return owned.evaluate(X)
 
 
-# --- simulating arbitrary motors, not design vectors -----------------------
-# Tolerance analysis perturbs a motor directly rather than moving through the
-# design space, so it needs a pool that takes motor dicts.
+# --- simulating arbitrary motors, not design vectors ---
+# Tolerance analysis perturbs motors directly, so it needs a pool of dicts.
 
 _MOTOR_TIMESTEP: float = 0.01
 

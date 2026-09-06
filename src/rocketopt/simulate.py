@@ -12,9 +12,7 @@ import numpy as np
 from motorlib.motor import Motor
 from motorlib.simResult import SimAlertLevel
 
-# openMotor solves for exit pressure with fsolve, which chatters on
-# over-expanded nozzles. The alerts it raises carry the same information, so the
-# numpy/scipy noise is not worth propagating.
+# fsolve chatters on over-expanded nozzles; openMotor's own alerts say the same.
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 PA_PER_PSI = 6894.757293168361

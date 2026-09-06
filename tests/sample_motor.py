@@ -1,12 +1,8 @@
 """A motor built in code, for tests to run against.
 
-The repository ships no motor. ``motor/`` is yours and is not committed, and the
-app is expected not to work until you put something there.
-
-Testing a motor optimiser still needs a motor, so this constructs one: round
-textbook dimensions that are nobody's design, and Nakka KNSB exactly as
-published in openMotor's own default propellant library. Built rather than
-committed, so there is no .ric file in this repository at all.
+The repository ships no motor, since a design belongs to whoever made it. This
+constructs one from round textbook dimensions and Nakka KNSB as published in
+openMotor's own defaults, so no .ric file need be committed.
 """
 
 from __future__ import annotations
@@ -20,9 +16,8 @@ PA_PER_PSI = 6894.757293168361
 #: 1 lb/(in^2*s) in SI, for the mass-flux limit.
 LB_IN2S = 703.06957829636
 
-#: Six grains because the ordering and grouping rules are written for a stack;
-#: 4 in bore and a 1.3 in throat because the result is an unremarkable, legal
-#: motor with no warnings, which is what a test wants to start from.
+#: Six grains, since the ordering and grouping rules assume a stack. The rest
+#: is chosen to give a legal motor with no warnings.
 GRAIN_COUNT = 6
 CORES_IN = (1.80, 1.80, 2.00, 2.00, 2.20, 2.20)
 OUTER_IN, LENGTH_IN = 4.00, 5.00
@@ -86,9 +81,7 @@ def write(root: Path, path: Path) -> Path:
     return path
 
 
-#: Written once per process, into a temporary directory that lives as long as
-#: the process does. Tests take a path rather than a dict because that is what
-#: load_ric and the study scripts take.
+#: Written once per process. Tests take a path because load_ric does.
 _CACHE: Dict[str, Any] = {}
 
 

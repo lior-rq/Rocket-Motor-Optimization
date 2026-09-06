@@ -1,9 +1,7 @@
 """Length, pressure and mass-flux conversions, and parsing of shop fractions.
 
-The motor this project started from is imperial to its last digit -- cores of
-exactly 1.600 / 1.900 / 2.200 in, a 6.000 in grain, a 1.300 in throat -- so the
-app has to speak inches as fluently as metres. Everything internal stays in SI;
-these helpers exist only at the edges where a person types a number.
+Everything internal stays in SI. These helpers exist at the edges, where a
+person types a number in inches.
 """
 
 from __future__ import annotations
@@ -25,9 +23,7 @@ MASS_FLUX_UNITS = {"kg/(m^2*s)": 1.0, "lb/(in^2*s)": KG_M2S_PER_LB_IN2S}
 def parse_number(text: Union[str, float, int]) -> float:
     """Reads a number the way a machinist would write one.
 
-    Accepts ``0.0625``, ``1/16``, ``1 1/16`` and ``2-1/2`` as well as plain
-    floats, because a step size on a shop drawing is far more often a fraction
-    than a decimal.
+    Accepts ``0.0625``, ``1/16``, ``1 1/16`` and ``2-1/2``.
     """
     if isinstance(text, (int, float)):
         return float(text)
@@ -71,11 +67,8 @@ def _table(kind: str):
 def snap(value, step: float, low: float = None, high: float = None):
     """Rounds to the nearest whole multiple of ``step``, anchored at zero.
 
-    Anchoring at zero rather than at the lower bound is deliberate: tooling
-    comes in whole fractions of an inch measured from nothing, so a 1/16 in grid
-    should offer 1.6250 in, not 1.6250 in plus whatever the lower bound happened
-    to be. When bounds are given the result is nudged *inward* so snapping can
-    never push a value outside a range it started inside.
+    Anchored at zero because tooling comes in whole fractions of an inch, not
+    fractions offset by a lower bound. Given bounds, the result is nudged inward.
     """
     import numpy as np
 
@@ -97,8 +90,7 @@ def snap(value, step: float, low: float = None, high: float = None):
 def round_up_to_step(value: float, step: float) -> float:
     """Smallest whole multiple of ``step`` that is at least ``value``.
 
-    Used on the minimum core increment so that walking a ladder of cores keeps
-    every rung on the machining grid.
+    Keeps every rung of a core ladder on the machining grid.
     """
     import math
 

@@ -1,7 +1,8 @@
-"""Checks the claim that DesignSpace relies on: for a fixed multiset of core
-diameters, openMotor's impulse, pressure and burn time do not depend on grain
-order, and putting the largest core aft is never worse for mass flux or
-port/throat ratio. If this ever fails, sorting the cores stops being free.
+"""Checks the claim DesignSpace relies on.
+
+For a fixed multiset of core diameters, impulse, pressure and burn time do not
+depend on grain order, and the largest core aft is never worse for mass flux or
+port/throat. If this fails, sorting the cores stops being free.
 """
 import sys
 from itertools import permutations

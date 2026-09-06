@@ -1,10 +1,8 @@
 """Surrogate models that predict burn outcomes without running openMotor.
 
-Not every quantity needs a model. ``port/throat``, initial ``Kn`` and
-propellant mass are closed-form BATES results that :mod:`rocketopt.design`
-already computes exactly, so learning them would only add error. The models
-here cover the quantities that genuinely depend on integrating the whole burn:
-initial thrust, total impulse, peak pressure, peak mass flux and so on.
+Only the quantities that need integrating the whole burn. Port/throat, initial
+Kn and propellant mass are closed-form in :mod:`rocketopt.design`, so learning
+them would only add error.
 """
 
 from __future__ import annotations
@@ -99,11 +97,10 @@ class Surrogate:
     # ------------------------------------------------------------- training
 
     def fit(self, frame: pd.DataFrame, test_size: float = 0.2) -> List[TargetScore]:
-        """Trains on the feasible-or-not but successfully simulated designs.
+        """Trains on successfully simulated designs, feasible or not.
 
-        Failed simulations carry no usable target values, so they are dropped;
-        infeasible ones are kept, because the optimiser has to be able to see
-        the constraint boundary from the inside and the outside.
+        Infeasible ones are kept so the constraint boundary is visible from
+        both sides. Failed simulations carry no targets and are dropped.
         """
         usable = frame[frame["ok"]].reset_index(drop=True)
         X = usable[self.feature_names].to_numpy(dtype=float)

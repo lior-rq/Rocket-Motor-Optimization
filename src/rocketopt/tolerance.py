@@ -1,24 +1,13 @@
 """What a design does when it is built rather than drawn.
 
-Every design the optimiser returns sits hard against whatever limits it was
-given -- that is what optimising means. A motor at 497 psi against a 500 psi
-ceiling is not 3 psi of margin, it is a coin flip once the throat is a few
-thousandths off and the propellant is from a different batch.
+An optimised design sits hard against its limits, so 497 psi against a 500 psi
+ceiling is a coin flip once tolerances are applied. Uncertainty is declared
+against the hardware and propellant once, independently of what was optimised.
 
-This propagates that. Uncertainty is declared against the *hardware and the
-propellant*, once, and applies unchanged to every optimisation -- it never needs
-to know what was being optimised, which is why nothing here is per-run.
-
-What varies together matters as much as how much:
-
-* **Core diameters vary independently.** Each is a separate pass with a separate
-  reamer or mandrel, so their errors do not cancel or reinforce.
-* **The propellant batch is one draw.** Burn rate and density are properties of
-  the mix, shared by every grain in the motor.
-* **Nozzle dimensions are one draw each.** One throat, machined once.
-
-Getting that wrong would flatter the answer: six independent core errors partly
-cancel, while one shared batch error does not.
+What varies together matters as much as how much. Core diameters vary
+independently, one reamer pass each. The propellant batch is a single draw
+shared by every grain. Each nozzle dimension is one draw. Treating the batch as
+independent per grain would flatter the answer.
 """
 
 from __future__ import annotations
@@ -83,9 +72,8 @@ TOLERANCE_FIELDS: Dict[str, Dict] = {
 class ToleranceSpec:
     """One quantity that varies, and by how much.
 
-    ``sigma`` is one standard deviation: inches for an absolute quantity, a
-    fraction for a relative one. For a uniform distribution it is the half-width
-    instead, because that is how a tolerance is written on a drawing.
+    ``sigma`` is one standard deviation, or the half-width for a uniform
+    distribution, which is how a tolerance is written on a drawing.
     """
 
     field: str
@@ -182,9 +170,7 @@ def perturb(motor: Dict, tolerances: Sequence[ToleranceSpec], rng) -> Dict:
     return built
 
 
-# --------------------------------------------------------------------------
-# Propagation
-# --------------------------------------------------------------------------
+# --- Propagation ---
 
 
 def _limit_check(metrics: Metrics, constraints) -> Dict[str, bool]:

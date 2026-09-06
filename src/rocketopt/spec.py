@@ -1,9 +1,6 @@
 """The vocabulary the app and the optimiser share.
 
-Everything a person configures in the GUI -- which dimensions may move, how
-finely they may move, what counts as better, and what must never be exceeded --
-lands in these dataclasses. They are plain data with ``to_dict``/``from_dict``
-on both sides, so a saved run is a JSON file and nothing more.
+Plain dataclasses with ``to_dict``/``from_dict``, so a saved run is JSON.
 """
 
 from __future__ import annotations
@@ -65,9 +62,8 @@ def _clean(value):
 class VariableSpec:
     """One dimension the optimiser may or may not move.
 
-    ``step`` is the machining grid in metres -- 0.00127 for a 0.05 in reamer
-    progression, 0 for "any value". ``fixed_value`` is used when ``free`` is
-    False, so freezing a dimension does not lose the number it is frozen at.
+    ``step`` is the machining grid in metres, 0 for any value. ``fixed_value``
+    holds the number a frozen dimension is frozen at.
     """
 
     name: str
@@ -119,9 +115,7 @@ class ConstraintSpec:
     op: str = "<="                  # "<=" | ">="
     value: float = 0.0
     enabled: bool = True
-    #: Search-time tightening, 0-1. Peak mass flux creeps upward as the timestep
-    #: shrinks, so searching it a few percent tight keeps boundary designs from
-    #: failing the final check. Removed at verification.
+    #: Search-time tightening, 0-1. Removed at verification.
     margin: float = 0.0
     label: str = ""
 
@@ -158,20 +152,15 @@ class OrderingSpec:
         )
 
 
-#: Effort presets, expressed as a total simulation budget. A run splits that
-#: budget across several independent searches rather than spending it all on
-#: one: three 4,800-simulation searches merged beat a single 14,400-simulation
-#: search on the same motor, because a genetic search converges on whatever
-#: basin it happened to start in.
+#: Total simulation budget per preset, split across independent searches: a
+#: genetic search converges on whatever basin it started in.
 EFFORT_LEVELS = {
     "quick":     {"budget": 3600,  "samples": 2048,  "label": "Quick"},
     "standard":  {"budget": 14400, "samples": 8192,  "label": "Standard"},
     "thorough":  {"budget": 43200, "samples": 16384, "label": "Thorough"},
 }
 
-#: Generations each search should get. Population is then whatever the budget
-#: affords -- too few generations and nothing converges, however wide the
-#: population.
+#: Generations per search; population is whatever the budget then affords.
 TARGET_GENERATIONS = 50
 MIN_POPULATION = 40
 MAX_POPULATION = 240
@@ -191,19 +180,14 @@ class RunSpec:
     #: Independent searches to run and merge. Each is seeded differently, and
     #: the reported front is the non-dominated set of everything they found.
     seeds: int = 3
-    #: Simulations to run at once. None leaves it to the machine, which is two
-    #: short of its core count -- enough to keep the rest of the computer usable
-    #: while a search runs. Raise it to spend a machine that is doing nothing
-    #: else; measured scaling is near-linear to about four workers, still worth
-    #: it to eight, and can go backwards past the performance cores.
+    #: Simulations at once. None means two short of the core count. Scaling is
+    #: near-linear to four workers and can reverse past the performance cores.
     workers: Optional[int] = None
     #: "fast" runs the genetic search straight against openMotor. "pareto" adds
     #: a surrogate and maps the whole trade-off between objectives.
     mode: str = "fast"
     seed: int = 17
-    #: Impulse reads about 0.5%% low at 0.02 s, which makes a >= impulse
-    #: constraint bite harder during the search than at verification. 0.01 s
-    #: halves that bias for twice the simulation cost, which BATES can afford.
+    #: Impulse reads ~0.5%% low at 0.02 s; 0.01 s halves that for twice the cost.
     search_timestep: float = 0.01
     verify_timestep: float = 0.002
     display_units: Dict[str, str] = field(
