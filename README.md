@@ -124,37 +124,6 @@ rewritten on every run, so its contents always describe the motor that was just
 optimised. It contains `result.json`, one `.ric` file per legal design, and the report
 figures. None of it is source, and none of it is committed.
 
-## Repository layout
-
-```
-app.py           entry point; starts the server and opens a browser
-bootstrap.py     builds the environment on a machine that has none of it
-app/
-  server.py      HTTP routes
-  jobs.py        background runs and their progress
-  static/        the interface
-src/rocketopt/
-  ric.py         reading and writing .ric files without PyQt
-  units.py       inch and millimetre conversion, fraction parsing, grid snapping
-  spec.py        variables, objectives and constraints as configured
-  design.py      design space, canonical form, closed-form features
-  simulate.py    headless openMotor runs reduced to metrics
-  sampling.py    Sobol and structured sampling, persistent worker pool
-  surrogate.py   per-target models, scoring, permutation importance
-  optimize.py    genetic search, Bayesian optimisation, NSGA-II
-  runner.py      one configuration to one verified set of results
-  sizing.py      how many distinct motors a configuration admits
-  tolerance.py   how a design behaves as built rather than as drawn
-  report.py      the technical report
-  bundle.py      one sheet per design, zipped
-  pdf.py         rendering a report to PDF
-motor/           the .ric file to optimise; ships empty, never committed
-reports/         generated reports; ships empty, never committed
-outputs/         the last run's data, rewritten every run, never committed
-docs/            the field guide
-tests/           machining grid, frozen dimensions, ordering rules
-vendor/openMotor cloned during setup, GPLv3, never committed
-```
 
 ## Development
 
