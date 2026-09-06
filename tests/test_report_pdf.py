@@ -33,10 +33,35 @@ def test_the_stylesheet_carries_print_rules():
     assert "break-inside:avoid" in PRINT_CSS
 
 
+def test_windows_looks_where_browsers_are_actually_installed(monkeypatch):
+    """Windows puts none of these on PATH, so names alone never find them.
+
+    Missing this meant every report on Windows quietly came out as HTML: the
+    renderer looked for "chrome" on PATH, found nothing, and fell back.
+    """
+    monkeypatch.setenv("ProgramFiles", r"C:\Program Files")
+    monkeypatch.setenv("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\someone\AppData\Local")
+    found = pdf_mod._windows_candidates()
+
+    joined = "\n".join(found)
+    assert "chrome.exe" in joined and "msedge.exe" in joined
+    # Chrome installs per-user when the installer has no admin rights, which on
+    # a school or work machine is the normal case, not the exception.
+    assert any("AppData" in path and "chrome.exe" in path for path in found)
+    assert any("Program Files (x86)" in path for path in found)
+    # Built with os.path.join, so every entry is one path, not a split string.
+    assert all(part not in found for part in ("G", "o", "e"))
+
+
+def test_every_platform_has_somewhere_to_look():
+    assert pdf_mod.candidates(), "no candidate paths for this platform"
+
+
 def test_no_browser_is_a_clear_failure_not_a_crash(tmp_path):
     source = tmp_path / "r.html"
     source.write_text(SAMPLE % CSS)
-    with mock.patch.object(pdf_mod, "BROWSERS", []), \
+    with mock.patch.object(pdf_mod, "candidates", lambda: []), \
          mock.patch.object(pdf_mod, "BROWSER_NAMES", []):
         assert pdf_mod.find_browser() is None
         with pytest.raises(pdf_mod.NoBrowser) as caught:
