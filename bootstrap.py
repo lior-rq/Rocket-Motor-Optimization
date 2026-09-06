@@ -154,6 +154,30 @@ def _run(command, cwd: Optional[Path] = None, what: str = "",
         raise subprocess.CalledProcessError(result.returncode, command)
 
 
+#: openMotor's one compiled module. mathlib/__init__ imports it, and
+#: motorlib/grain.py imports mathlib, so motorlib cannot be imported at all
+#: without it -- but nothing in a BATES burn ever calls into it. Measured: a
+#: full verification-timestep simulation calls _get_perimeter zero times. It
+#: walks contours of a regression map, which is how the level-set grain types
+#: (finocyl, star, X-core) find their perimeter. This app does BATES.
+#:
+#: So with no compiler, this stands in: enough to satisfy the import, and an
+#: immediate explicit failure if a geometry that genuinely needs it reaches
+#: here. Substituting silence for the real thing would be worse than not
+#: running at all.
+PERIMETER_SHIM = '"""Pure-Python stand-in for openMotor\'s compiled perimeter finder.\n\nWritten by this project\'s bootstrap when no C compiler was available to\nbuild the real one. It exists so motorlib can be imported. BATES motors\nnever call into it; grain geometries that walk a regression map do, and\nthey fail here rather than quietly return a wrong number.\n"""\n\n\ndef _get_perimeter(*args, **kwargs):\n    raise NotImplementedError(\n        "This grain geometry needs openMotor\'s compiled perimeter finder, "\n        "which was not built because no C compiler was available. BATES "\n        "grains do not need it. To use the others, install a compiler and "\n        "re-run setup: macOS \'xcode-select --install\', Debian \'apt install "\n        "build-essential python3-dev\', Windows \'Microsoft C++ Build Tools\'."\n    )\n'
+
+
+def write_perimeter_shim(vendor: Path) -> None:
+    """Lets the app run without a compiler, for the grains it supports."""
+    target = vendor / "mathlib" / "_find_perimeter_cy.py"
+    target.write_text(PERIMETER_SHIM)
+    print("  wrote a pure-Python stand-in for it instead.\n"
+          "  BATES motors -- everything this app optimises -- never call it, so\n"
+          "  the app runs normally. Other grain geometries would fail with a\n"
+          "  message saying a compiler is needed.\n")
+
+
 def build(root: Path = ROOT) -> Path:
     """Creates the environment. Returns the interpreter to run the app with."""
     python = venv_python(root)
@@ -208,12 +232,10 @@ def build(root: Path = ROOT) -> Path:
         _run([str(python), "setup.py", "build_ext", "--inplace"], cwd=vendor,
              what="building openMotor's native extension")
     except subprocess.CalledProcessError:
-        raise SystemExit(
-            "\nopenMotor's extension did not build. That step needs a C compiler:\n"
-            "  macOS          xcode-select --install\n"
-            "  Debian/Ubuntu  sudo apt install build-essential python3-dev\n"
-            "  Windows        Microsoft C++ Build Tools\n"
-            "Install one and run this again.")
+        print("\n  The native extension did not build. The output above says why,\n"
+              "  and on Windows it is usually a C++ toolchain that setuptools\n"
+              "  cannot find even when cl.exe works in your shell.")
+        write_perimeter_shim(vendor)
 
     site = subprocess.run(
         [str(python), "-c",

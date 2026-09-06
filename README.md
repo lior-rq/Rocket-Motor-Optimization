@@ -14,11 +14,17 @@ python3 app.py                    # opens http://localhost:8420
 That is the whole install. The first run offers to build the environment —
 a `.venv` here, the packages in `requirements.txt`, and a pinned clone of
 openMotor — then starts itself inside it. Your system Python is left alone.
-It needs **Python 3.9–3.12**, `git`, and a C compiler for openMotor's native
-extension (`xcode-select --install` on macOS, `build-essential` on Debian).
-The upper bound is real: the pinned numpy, scipy and scikit-image publish wheels
-only up to 3.12, and on 3.13 pip tries to build them from source. If you have a
-newer Python as well, it finds and uses a supported one. To build it
+It needs **Python 3.9–3.12** and `git`. That upper bound is real: the pinned numpy,
+scipy and scikit-image publish wheels only up to 3.12, and on 3.13 pip tries to
+build them from source. If you have a newer Python as well, setup finds and uses a
+supported one.
+
+A C compiler is **optional**. openMotor has one compiled module, and `motorlib`
+cannot be imported without it — but nothing in a BATES burn ever calls it (measured:
+zero calls in a full verification-timestep simulation; it walks regression-map
+contours, which is how the level-set geometries find their perimeter). With no
+compiler, setup writes a pure-Python stand-in and the app runs normally, raising a
+clear error if a geometry that genuinely needs it ever reaches it. To build it
 without being asked: `scripts/setup_env.sh`, or `python3 bootstrap.py --yes`.
 
 ![The optimizer](docs/screenshot.png)

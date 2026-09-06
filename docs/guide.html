@@ -179,10 +179,10 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
   <p>That is the whole install. The first time, it says it needs to build an environment
   and waits for you to agree: a <code>.venv</code> in this folder, the packages in
   <code>requirements.txt</code>, and a pinned clone of openMotor. Nothing outside the
-  folder is touched and your system Python is left alone. It does need
-  <strong>Python 3.9 to 3.12</strong>, <code>git</code>, and a C compiler for
-  openMotor&rsquo;s native extension &mdash; <code>xcode-select --install</code> on macOS,
-  <code>build-essential</code> on Debian.</p>
+  folder is touched and your system Python is left alone. It needs
+  <strong>Python 3.9 to 3.12</strong> and <code>git</code>. A C compiler is optional:
+  openMotor has one compiled module that nothing in a BATES burn ever calls, so without
+  a compiler setup writes a pure-Python stand-in and the app runs normally.</p>
   <div class="note warn">
     <span class="lbl">Why 3.12 and not newer</span>
     <p>The pinned numpy, scipy and scikit-image publish wheels up to 3.12 only. PyPI does
