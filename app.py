@@ -32,10 +32,18 @@ def ready() -> bool:
 def relaunch_in_environment() -> None:
     """Builds the environment if needed, then re-runs this file inside it.
 
-    Handing over with execv rather than importing across interpreters: the app
-    then runs under the environment's own Python, with nothing of the outer
-    one's import state carried in.
+    Handing over to a separate interpreter rather than importing across them:
+    the app then runs under the environment's own Python, with nothing of the
+    outer one's import state carried in.
+
+    Through subprocess and not os.execv. On Windows os.exec* goes through the
+    MS C runtime, which flattens the argument list into one string for the child
+    to re-parse, so any argument containing a space is torn apart -- a path like
+    C:\My Things\School\Rocket Club\... reaches the child as three arguments
+    and it opens none of them. subprocess quotes properly on every platform.
     """
+    import subprocess
+
     import bootstrap
 
     python = bootstrap.ensure(ROOT, assume_yes="--yes" in sys.argv or "-y" in sys.argv)
@@ -45,12 +53,13 @@ def relaunch_in_environment() -> None:
     if sys.prefix == str(ROOT / ".venv"):
         raise SystemExit("The environment is built but still incomplete.")
     print("\n  Starting under {}\n".format(os.path.relpath(python, ROOT)))
-    # execv replaces the process without flushing Python's buffers, so anything
-    # printed above is lost unless it is pushed out first.
     sys.stdout.flush()
-    sys.stderr.flush()
-    os.execv(str(python), [str(python), str(ROOT / "app.py")]
-             + [a for a in sys.argv[1:] if a not in ("--yes", "-y")])
+    command = [str(python), str(ROOT / "app.py")] + [
+        a for a in sys.argv[1:] if a not in ("--yes", "-y")]
+    try:
+        raise SystemExit(subprocess.run(command).returncode)
+    except KeyboardInterrupt:
+        raise SystemExit(0)
 
 
 def main() -> None:
