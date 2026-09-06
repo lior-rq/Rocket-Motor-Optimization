@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import warnings
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Sequence
+from typing import Dict, List
 
 import numpy as np
 
@@ -155,13 +155,9 @@ def constraint_violations(metrics: Metrics, space) -> np.ndarray:
     )
 
 
-def is_feasible(metrics: Metrics, space, tol: float = 0.0) -> bool:
-    return bool(metrics.ok and (constraint_violations(metrics, space) <= tol).all())
-
-
 def curves(motor_dict: Dict, timestep: float = 0.002) -> Dict:
     """Every time series the app plots, from one simulation run.
-
+    
     Mass flux and mass flow are per-grain in openMotor, which is what makes the
     aft grain's flux the number that matters -- so they come back as a list of
     series rather than one, letting the app show which grain is actually running
@@ -193,15 +189,3 @@ def curves(motor_dict: Dict, timestep: float = 0.002) -> Dict:
     }
 
 
-def thrust_curve(motor_dict: Dict, timestep: float = 0.005):
-    """Returns (time, thrust, chamber pressure) arrays for plotting."""
-    motor_dict = dict(motor_dict)
-    motor_dict["config"] = dict(motor_dict["config"])
-    motor_dict["config"]["timestep"] = timestep
-    with np.errstate(all="ignore"):
-        result = Motor(motor_dict).runSimulation()
-    return (
-        np.asarray(result.channels["time"].getData(), dtype=float),
-        np.asarray(result.channels["force"].getData(), dtype=float),
-        np.asarray(result.channels["pressure"].getData(), dtype=float),
-    )

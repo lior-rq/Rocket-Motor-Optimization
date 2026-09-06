@@ -40,7 +40,6 @@ def main() -> None:
                 grain["properties"]["coreDiameter"] = float(core)
             runs.append((perm, simulate_motor(motor, timestep=0.02)))
 
-        reference = runs[0][1]
         for name in order_free:
             values = np.array([getattr(m, name) for _, m in runs])
             spread = values.ptp() / max(abs(values.mean()), 1e-12)

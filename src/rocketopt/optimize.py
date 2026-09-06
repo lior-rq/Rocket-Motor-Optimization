@@ -2,8 +2,6 @@
 
 * :func:`direct_search` runs a genetic algorithm against openMotor itself.
   Expensive, but its answer is ground truth.
-* :func:`bayes_optimize` fits a Gaussian process and spends each simulation
-  where expected improvement is highest.
 * :func:`surrogate_pareto` runs NSGA-II against the trained surrogate, then
   re-simulates the front so nothing reported is model output.
 """
@@ -11,7 +9,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -20,9 +18,6 @@ from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.core.problem import Problem
 from pymoo.operators.sampling.lhs import LHS
 from pymoo.optimize import minimize
-from scipy.stats import norm, qmc
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
 
 from .design import DesignSpace
 from .sampling import SimulationPool, evaluate_batch, sobol_designs
@@ -309,107 +304,6 @@ def direct_pareto(
                               ascending=False).reset_index(drop=True)
     return {"front": front, "verified": verified, "history": evaluated,
             "n_simulations": len(evaluated)}
-
-
-# --- Bayesian optimisation ---
-
-
-def _fit_gp(X: np.ndarray, y: np.ndarray, seed: int = 0) -> GaussianProcessRegressor:
-    kernel = ConstantKernel(1.0, (1e-3, 1e3)) * Matern(
-        length_scale=np.ones(X.shape[1]), length_scale_bounds=(1e-2, 1e2), nu=2.5
-    ) + WhiteKernel(1e-4, (1e-8, 1e0))
-    gp = GaussianProcessRegressor(
-        kernel=kernel, normalize_y=True, n_restarts_optimizer=2, random_state=seed
-    )
-    gp.fit(X, y)
-    return gp
-
-
-def bayes_optimize(
-    space: DesignSpace,
-    objective: Objective,
-    n_init: int = 48,
-    n_iter: int = 24,
-    batch: int = 8,
-    n_candidates: int = 8192,
-    timestep: float = 0.02,
-    workers: Optional[int] = None,
-    seed: int = 0,
-) -> Dict:
-    """Constrained Bayesian optimisation with expected improvement.
-
-    Two Gaussian processes per round, one on the objective and one on the worst
-    violation, with the acquisition weighted by probability of feasibility.
-    """
-    rng = np.random.default_rng(seed)
-    lower, upper = space.lower, space.upper
-    span = upper - lower
-
-    def to_unit(X):
-        return (np.atleast_2d(X) - lower) / span
-
-    pool = SimulationPool(space, timestep=timestep, workers=workers)
-    pool.__enter__()
-    X = sobol_designs(space, n_init, seed=seed)
-    frames = [pool.evaluate(X)]
-
-    for _ in range(n_iter):
-        seen = pd.concat(frames, ignore_index=True)
-        X_seen = space.canonicalize(seen[space.names].to_numpy(dtype=float))
-        score = objective.score(seen["initial_thrust"], seen["total_impulse"])
-        score = np.where(seen["ok"].to_numpy(), score, np.nanmin(score) - 1.0)
-        violation = scale_constraints(seen, objective, space).max(axis=1)
-
-        gp_obj = _fit_gp(to_unit(X_seen), score, seed)
-        gp_con = _fit_gp(to_unit(X_seen), violation, seed)
-
-        feasible = violation <= 0
-        best = score[feasible].max() if feasible.any() else score.max()
-
-        candidates = space.canonicalize(
-            lower + qmc.Sobol(space.n_dim, scramble=True,
-                              seed=int(rng.integers(1 << 30))).random(n_candidates) * span
-        )
-        unit = to_unit(candidates)
-        mu, sigma = gp_obj.predict(unit, return_std=True)
-        sigma = np.maximum(sigma, 1e-12)
-        improvement = mu - best
-        z = improvement / sigma
-        expected_improvement = improvement * norm.cdf(z) + sigma * norm.pdf(z)
-
-        mu_c, sigma_c = gp_con.predict(unit, return_std=True)
-        prob_feasible = norm.cdf(-mu_c / np.maximum(sigma_c, 1e-12))
-
-        acquisition = expected_improvement * prob_feasible
-        # Take the batch from distinct peaks rather than one cluster.
-        order = np.argsort(-acquisition)
-        picked: List[int] = []
-        for idx in order:
-            if len(picked) >= batch:
-                break
-            if all(np.linalg.norm(unit[idx] - unit[j]) > 0.05 for j in picked):
-                picked.append(idx)
-        if not picked:
-            picked = list(order[:batch])
-
-        frames.append(pool.evaluate(candidates[picked]))
-
-    pool.close()
-    seen = pd.concat(frames, ignore_index=True)
-    return {"history": seen, "n_simulations": len(seen),
-            "x": best_design(seen, space, objective)}
-
-
-def best_design(frame: pd.DataFrame, space: DesignSpace,
-                objective: Objective) -> Optional[np.ndarray]:
-    """Highest-scoring feasible row of an evaluation history."""
-    violation = scale_constraints(frame, objective, space).max(axis=1)
-    ok = frame["ok"].to_numpy() & (violation <= 0)
-    if not ok.any():
-        return None
-    score = objective.score(frame["initial_thrust"], frame["total_impulse"])
-    winner = np.flatnonzero(ok)[np.argmax(score[ok])]
-    return space.canonical_one(frame.iloc[winner][space.names].to_numpy(dtype=float))
 
 
 # --- Multi-objective front on the surrogate ---

@@ -5,7 +5,6 @@ All the work lives in ``rocketopt.runner``; this translates it to and from JSON.
 
 from __future__ import annotations
 
-import io
 import os
 import tempfile
 import threading
@@ -14,7 +13,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -27,7 +26,7 @@ from rocketopt.tolerance import (TOLERANCE_FIELDS, ToleranceSpec,
                                  default_tolerances, propagate, summarise)
 from rocketopt.spec import (EFFORT_LEVELS, OPTIMISABLE_METRICS, ORDERING_MODES,
                             RunSpec)
-from rocketopt.units import KG_M2S_PER_LB_IN2S, M_PER_IN
+from rocketopt.units import KG_M2S_PER_LB_IN2S
 
 
 from .jobs import JobRegistry

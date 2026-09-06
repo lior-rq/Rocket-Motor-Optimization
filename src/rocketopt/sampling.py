@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ProcessPoolExecutor
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 from scipy.stats import qmc
 
-from .design import DesignSpace, SpaceConfig
-from .simulate import Metrics, constraint_violations, simulate_motor
+from .design import DesignSpace
+from .simulate import constraint_violations, simulate_motor
 
 # Worker-process state. Rebuilding the DesignSpace once per worker keeps the
 # per-task payload down to an 8-float vector.
@@ -159,17 +159,6 @@ def sobol_designs(space: DesignSpace, n: int, seed: int = 0) -> np.ndarray:
     return space.canonicalize(X)
 
 
-def generate_dataset(
-    space: DesignSpace,
-    n: int,
-    timestep: float = 0.02,
-    seed: int = 0,
-    workers: Optional[int] = None,
-) -> pd.DataFrame:
-    X = sobol_designs(space, n, seed=seed)
-    return evaluate_batch(space, X, timestep=timestep, workers=workers)
-
-
 def structured_designs(space: DesignSpace, n: int, seed: int = 0) -> np.ndarray:
     """Designs whose grains repeat a few distinct core diameters.
 
@@ -223,29 +212,3 @@ def generate_mixed_dataset(
     return evaluate_batch(space, X, timestep=timestep, workers=workers)
 
 
-def rejection_designs(
-    space: DesignSpace,
-    n: int,
-    predicate,
-    seed: int = 0,
-    oversample: int = 40,
-) -> np.ndarray:
-    """Designs kept only if their closed-form features pass ``predicate``.
-
-    Retargeting the envelope moves the interesting region of the space. Because
-    the screening features cost nothing to compute, candidates can be filtered
-    before any of them is simulated -- so a dataset can be concentrated where
-    the constraints now bind without wasting burns elsewhere.
-    """
-    keep = []
-    drawn = 0
-    for block in range(oversample):
-        batch = mixed_designs(space, max(n, 1024), seed=seed + 100 * block)
-        drawn += len(batch)
-        mask = predicate(pd.DataFrame(space.features(batch),
-                                      columns=space.feature_names))
-        keep.append(batch[np.asarray(mask, dtype=bool)])
-        if sum(len(k) for k in keep) >= n:
-            break
-    found = np.vstack(keep)[:n]
-    return found

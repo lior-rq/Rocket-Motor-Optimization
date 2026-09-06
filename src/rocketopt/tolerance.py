@@ -13,13 +13,13 @@ independent per grain would flatter the answer.
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
 from .ric import clone
-from .simulate import PA_PER_PSI, Metrics, simulate_motor
+from .simulate import Metrics, simulate_motor
 from .units import M_PER_IN as IN
 
 #: How each quantity is drawn. "per_grain" quantities get one draw per grain;

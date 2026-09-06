@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import html
-import json
 import math
 import tempfile
 from dataclasses import dataclass
@@ -75,11 +74,6 @@ class ReportRun:
     @property
     def feasible(self) -> bool:
         return bool(self.result.get("designs"))
-
-    @property
-    def free_names(self) -> List[str]:
-        return [v.name for v in self.spec.variables if v.free]
-
 
 # --- Display helpers ---
 
@@ -376,7 +370,6 @@ def build_report(runs: Sequence[ReportRun], base_motor: Dict, out_dir: Path,
     grain = base_motor["grains"][0]["properties"]
     nozzle = base_motor["nozzle"]
     baseline = simulate_motor(base_motor, timestep=0.002)
-    any_feasible = any(r.feasible for r in runs)
     title = title or _default_title(runs, base_motor)
 
     body = [_header(title, runs, base_motor, grain, baseline),
@@ -408,7 +401,6 @@ def build_report(runs: Sequence[ReportRun], base_motor: Dict, out_dir: Path,
 def _default_title(runs: Sequence[ReportRun], base_motor: Dict) -> str:
     designs = [d for r in runs for d in r.designs]
     if designs:
-        letter = designs[0].get("designation", "")[:1]
         cls = "".join(c for c in designs[0].get("designation", "") if c.isalpha())[:1]
         if cls:
             return "{}-Class Trade Study".format(cls)

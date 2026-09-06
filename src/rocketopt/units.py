@@ -38,22 +38,6 @@ def parse_number(text: Union[str, float, int]) -> float:
     return total
 
 
-def to_si(value: Union[str, float], unit: str, kind: str = "length") -> float:
-    """Converts a displayed value into SI."""
-    table = _table(kind)
-    if unit not in table:
-        raise ValueError("unknown {} unit {!r}".format(kind, unit))
-    return parse_number(value) * table[unit]
-
-
-def from_si(value: float, unit: str, kind: str = "length") -> float:
-    """Converts an SI value into the requested display unit."""
-    table = _table(kind)
-    if unit not in table:
-        raise ValueError("unknown {} unit {!r}".format(kind, unit))
-    return float(value) / table[unit]
-
-
 def _table(kind: str):
     if kind == "length":
         return LENGTH_UNITS
@@ -99,8 +83,3 @@ def round_up_to_step(value: float, step: float) -> float:
     return math.ceil(value / step - 1e-9) * step
 
 
-def format_length(value_m: float, unit: str = "mm", digits: int = None) -> str:
-    shown = from_si(value_m, unit)
-    if digits is None:
-        digits = 4 if unit == "in" else 2
-    return "{:.{}f} {}".format(shown, digits, unit)

@@ -54,10 +54,6 @@ ORDERING_MODES = {
 }
 
 
-def _clean(value):
-    return {k: v for k, v in value.items() if v is not None}
-
-
 @dataclass
 class VariableSpec:
     """One dimension the optimiser may or may not move.

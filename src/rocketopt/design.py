@@ -201,10 +201,6 @@ class DesignSpace:
         return [self.specs[i].name for i in self.free_index]
 
     @property
-    def all_names(self) -> List[str]:
-        return [spec.name for spec in self.specs]
-
-    @property
     def lower(self) -> np.ndarray:
         return np.array([self.specs[i].low for i in self.free_index], dtype=float)
 

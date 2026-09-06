@@ -7,12 +7,9 @@ them would only add error.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
@@ -163,36 +160,3 @@ class Surrogate:
 
     # ---------------------------------------------------------- persistence
 
-    def save(self, directory: str | Path) -> Path:
-        directory = Path(directory)
-        directory.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"models": self.models, "kind": self.kind,
-                     "feature_names": self.feature_names}, directory / "surrogate.joblib")
-        (directory / "scores.json").write_text(
-            json.dumps([s.as_row() for s in self.scores], indent=2)
-        )
-        return directory
-
-    @classmethod
-    def load(cls, directory: str | Path, space) -> "Surrogate":
-        directory = Path(directory)
-        blob = joblib.load(directory / "surrogate.joblib")
-        surrogate = cls(space, kind=blob["kind"])
-        surrogate.models = blob["models"]
-        surrogate.feature_names = blob["feature_names"]
-        scores = json.loads((directory / "scores.json").read_text())
-        surrogate.scores = [TargetScore(**s) for s in scores]
-        return surrogate
-
-
-def compare_models(space, frame: pd.DataFrame, kinds: Sequence[str] = ("gbt", "rf", "mlp"),
-                   test_size: float = 0.2) -> pd.DataFrame:
-    """Trains each model family so the choice of surrogate is evidence-based."""
-    rows = []
-    for kind in kinds:
-        surrogate = Surrogate(space, kind=kind)
-        for score in surrogate.fit(frame, test_size=test_size):
-            row = score.as_row()
-            row["model"] = kind
-            rows.append(row)
-    return pd.DataFrame(rows).pivot(index="target", columns="model", values="r2")

@@ -6,7 +6,7 @@ The internal ballistics engine is [openMotor](https://github.com/reilleya/openMo
 by Andrew Reilley, licensed GPLv3. It is not redistributed with this project. Setup
 clones it locally, pinned to a single commit.
 
-On a machine without a C compiler, setup adds one file to that local clone:
+On a machine without a C compiler (skill issue), setup adds one file to that local clone:
 `mathlib/_find_perimeter_cy.py`, a pure-Python stand-in for openMotor's compiled
 perimeter finder. It exists only so that `motorlib` can be imported. BATES motors,
 which are all this application optimises, never call it. Any other grain geometry that
@@ -20,9 +20,4 @@ connection. Plotly.js is licensed MIT.
 
 ## Licensing note
 
-This project is MIT licensed. openMotor is GPLv3 and is cloned at setup rather than
-redistributed here. The code imports `motorlib` directly, and whether that constitutes
-a derivative work is the usual unsettled question about linking to GPL-licensed code.
-
-If a component is used here without proper attribution, that is an oversight rather
-than an intention. Please open an issue and it will be corrected.
+This project is only intented to be accessed by bill clinton and kanye west

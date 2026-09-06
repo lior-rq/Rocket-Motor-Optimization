@@ -7,8 +7,10 @@ it does, its room against each limit, and where it sits on the curve.
 
 from __future__ import annotations
 
+import os
 import tempfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
@@ -17,11 +19,14 @@ from .report import (ReportRun, data_uri, display, esc, inches, inches_exact,
                      metric_label, metric_unit)
 from .report_style import CSS, FONT_LINK
 from .simulate import PA_PER_PSI
-from .units import KG_M2S_PER_LB_IN2S as LB
 
 #: Never render more than this many. The front is normally a few dozen; a
 #: pathological one should not turn a button into an hour of rendering.
 MAX_SHEETS = 60
+
+#: Browser processes to run at once. Each costs a couple of hundred megabytes,
+#: and the render is short enough that startup dominates.
+RENDER_WORKERS = 4
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -265,11 +270,10 @@ def build_bundle(run: ReportRun, base_motor: Dict, out_path: Path,
     total = len(designs)
     with tempfile.TemporaryDirectory(prefix="rocketopt-bundle-") as staging:
         stage = Path(staging)
-        made: List[Path] = []
-        failures = 0
+        pages = []
         for index, design in enumerate(designs):
             name = sheet_name(design, index)
-            on_progress(index, total, "Rendering {} ({} of {})".format(
+            on_progress(index, total, "Drawing {} ({} of {})".format(
                 name, index + 1, total))
             figures = {
                 "curve": _curve_figure(design, stage / (name + "-curve.png")),
@@ -278,12 +282,28 @@ def build_bundle(run: ReportRun, base_motor: Dict, out_path: Path,
             }
             source = stage / (name + ".html")
             source.write_text(design_html(design, index, run, base_motor, figures))
-            try:
-                made.append(html_to_pdf(source, stage / (name + ".pdf")))
-            except (NoBrowser, OSError, ValueError):
-                # One sheet failing must not lose the other fifty-nine.
-                failures += 1
-                made.append(source)
+            pages.append((source, stage / (name + ".pdf")))
+
+        # Rendered several at a time. Each is a separate browser process that
+        # spends most of its life starting up, so they overlap almost perfectly.
+        # Capped because each one costs a couple of hundred megabytes.
+        made: List[Path] = [None] * len(pages)
+        failures = 0
+        workers = max(1, min(RENDER_WORKERS, (os.cpu_count() or 2) // 2, len(pages)))
+        done = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(html_to_pdf, src, dst): i
+                       for i, (src, dst) in enumerate(pages)}
+            for future in as_completed(futures):
+                i = futures[future]
+                try:
+                    made[i] = future.result()
+                except (NoBrowser, OSError, ValueError):
+                    # One sheet failing must not lose the rest.
+                    failures += 1
+                    made[i] = pages[i][0]
+                done += 1
+                on_progress(done, total, "Rendered {} of {}".format(done, total))
 
         on_progress(total, total, "Packing the zip")
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
