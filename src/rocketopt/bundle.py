@@ -196,7 +196,7 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
             "the same run.</figcaption></figure>".format(
                 data_uri(figures["position"]), len(designs)))
 
-    title = "{} — design {} of {}".format(
+    title = "{}, design {} of {}".format(
         design.get("designation", "Motor"), index + 1, len(designs))
     trade = ""
     if len(metrics) >= 2:
@@ -207,7 +207,7 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
   <p class="eyebrow">{n} × BATES {d} × {l} in · {prop}</p>
   <h1>{title}</h1>
   <p class="byline">Created by Lior Benshoshan · from {label}</p>
-  <p class="lede">One design off the trade-off curve, with the numbers you would
+  <p class="lede">One design from the trade-off curve, with the dimensions to
   machine to.{trade}</p>
 </header>
 <hr class="rule">

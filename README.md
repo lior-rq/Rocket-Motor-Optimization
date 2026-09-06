@@ -1,275 +1,170 @@
 # Rocket Optimization
 
-**Lior’s Really Good™ Rocket Optimizer** — created by Lior Benshoshan.
+Lior's Really Good™ Rocket Optimizer, created by Lior Benshoshan.
 
-Machine-learning-assisted design search for solid rocket motors, driven by
-[openMotor](https://github.com/reilleya/openMotor)'s internal ballistics engine running
-headlessly. Point it at a `.ric`, say which dimensions may move and what you want more
-of, and it returns motors you can open in openMotor and machine to the numbers.
+A local web application that searches for solid rocket motor designs. It runs
+[openMotor](https://github.com/reilleya/openMotor)'s internal ballistics engine
+headlessly, evaluating thousands of candidate motors against a set of limits and
+returning the ones that satisfy them. Results are exported as `.ric` files that open
+directly in openMotor.
 
-```bash
-python3 app.py                    # opens http://localhost:8420
-```
-
-That is the whole install. The first run offers to build the environment —
-a `.venv` here, the packages in `requirements.txt`, and a pinned clone of
-openMotor — then starts itself inside it. Your system Python is left alone.
-It needs **Python 3.9–3.12** and `git`. That upper bound is real: the pinned numpy,
-scipy and scikit-image publish wheels only up to 3.12, and on 3.13 pip tries to
-build them from source. If you have a newer Python as well, setup finds and uses a
-supported one.
-
-A C compiler is **optional**. openMotor has one compiled module, and `motorlib`
-cannot be imported without it — but nothing in a BATES burn ever calls it (measured:
-zero calls in a full verification-timestep simulation; it walks regression-map
-contours, which is how the level-set geometries find their perimeter). With no
-compiler, setup writes a pure-Python stand-in and the app runs normally, raising a
-clear error if a geometry that genuinely needs it ever reaches it. To build it
-without being asked: `scripts/setup_env.sh`, or `python3 bootstrap.py --yes`.
+The application is built for BATES grain geometries.
 
 ![The optimizer](docs/screenshot.png)
 
-**[Field guide](docs/Optimizer-Field-Guide.pdf)** ([HTML source](docs/guide.html)) — how to drive it.
+The [field guide](docs/Optimizer-Field-Guide.pdf) documents the interface panel by
+panel. Its [HTML source](docs/guide.html) is the file the PDF is rendered from.
 
-Everything reported is simulated, never predicted: a surrogate may propose and the search
-may run at a coarse timestep, but every design that reaches you has been re-run in
-openMotor at the verification timestep with all safety margins removed.
-
----
-
-Whatever `.ric` sits in `motor/` is the motor that gets optimised — drop yours in and
-it is the one that loads, whatever it is called. The folder ships empty and the app does
-nothing until you put something in it: the motor is yours, and nobody else's belongs in
-this repository. There is no `.ric` here at all — the tests build the motor they need
-(`python tests/sample_motor.py motor/sample.ric` writes one, if you want something to
-try it on).
-
-## What is optimised
-
-Grain outer diameter, length, count and the propellant are hardware — read from the
-`.ric` and never changed, by the optimiser or by the app. Nine dimensions are free:
-
-| Variable | Note |
-|---|---|
-| `core_1 … core_6` | core diameter of each grain, grain 1 forward |
-| `throat` | nozzle throat diameter |
-| `exit` | exit diameter, floored at `1.15 × throat` |
-| `throat_length` | nozzle throat length |
-
-Each takes a **machining step** — 0.01 in, 1/16 in, whatever you actually hold — and the
-optimiser only ever returns values on that grid. Bounds, objectives and limits are all
-set in the app; the defaults come from the `.ric`'s own `maxPressure`, `maxMassFlux` and
-`minPortThroat`.
-
-Objectives are any of sixteen metrics, each maximised, minimised, or driven to a target.
-Pick two and the result is a trade-off curve rather than a single motor.
-
-## Two things that shrink the problem
-
-**Grain order is free.** In openMotor's model, impulse, pressure and burn time
-depend only on the *multiset* of core diameters, not their order — verified to
-1e-16 across 60 permutations by `scripts/verify_ordering.py`. Order changes only
-mass flux and port/throat ratio, and both are best with the largest core aft. So
-cores are always stored sorted smallest-forward, removing a 720-fold degeneracy.
-
-**Some outputs are closed-form.** Port/throat ratio, initial Kn, propellant mass
-and ignition chamber pressure are exact BATES results, computed in
-`design.py` rather than learned. Only quantities that require integrating the
-whole burn get a model.
-
-## The app — Lior's Really Good™ Rocket Optimizer
+## Installation
 
 ```bash
-.venv/bin/python app.py          # opens http://localhost:8420 in your browser
+python3 app.py
 ```
 
-A local web app for driving all of this without editing Python. You pick which
-dimensions may move, what counts as better, and what must never be exceeded;
-it searches, verifies, and hands back `.ric` files.
+The first run builds an environment before starting: a `.venv` in the project folder,
+the packages listed in `requirements.txt`, and a clone of openMotor pinned to a known
+commit. It asks for confirmation first and writes nothing outside the project folder.
+The application then opens at `http://localhost:8420`.
 
-**Machining precision.** Every diameter takes an optional *step* — your grid.
-Type `1/16`, `0.05`, or leave it blank for any size. The baseline motor is
-imperial to its last digit (cores of exactly 1.600/1.900/2.200 in, a 0.100 in
-grid), so the grid is anchored at zero and offers whole fractions of an inch,
-which is how tooling actually comes. Snapping composes with the ordering rules:
-grouping averages, so snapping follows it, and the minimum core increment is
-rounded up to a whole number of grid steps so walking the ladder never leaves
-the grid.
+Requirements are Python 3.9 to 3.12, and `git`. The upper version bound is a
+consequence of the pinned dependencies: numpy, scipy and scikit-image publish wheels
+up to Python 3.12 only, and later versions cause pip to attempt a source build. Setup
+checks the version before installing anything, and will use a supported interpreter if
+one is installed alongside a newer one.
 
-**Two search modes.** *Fast* runs a genetic search straight against openMotor —
-tens of seconds, and it needs no model. *Map the full trade-off* samples the
-space, trains surrogates, runs NSGA-II against them, then re-simulates the
-survivors; slower, but you get a curve of options instead of one answer.
+A C compiler is optional. openMotor contains one compiled module that BATES
+simulations never call. Without a compiler, setup substitutes a pure-Python stand-in
+that raises an error if a grain geometry ever requires the real one.
 
-**The size of the space, before you run anything.** As soon as bounds and steps are set,
-the app shows how many distinct motors the configuration admits. It is not a plain
-product of the per-variable counts: cores are stored sorted, so a set of six diameters is
-one motor rather than 720, and the count is a multiset coefficient. Ordering rules cut
-further, and the exit is counted jointly with the throat because its range depends on it.
-The panel also says how many of them the search will actually simulate, and how long
-brute force would take — on a 0.01 in grid with all nine dimensions free that is
-4.5 × 10¹⁹ motors and 4.4 × 10¹⁰ years, which is the argument for a genetic search in one
-line. `sizing.py` carries the combinatorics; `tests/test_sizing.py` checks the formulas
-against brute-force enumeration.
+To build the environment without the confirmation prompt, run `scripts/setup_env.sh`
+or `python3 bootstrap.py --yes`.
 
-**Watch it search.** After Optimize, the workspace shows the live population rather than
-a progress bar: every dot is a motor that has actually been simulated, grey if it broke a
-limit and blue if it did not, with the current best trade-off drawn through them and a
-fading wake of the last dozen generations so you can see which way the search is
-travelling. It reads the real evaluated population in real units, not a stand-in
-animation, and the whole payload is under 3 KB a second. A run can be reopened while it
-is still going with `?job=<id>`.
+## The motor
 
-**Tolerance analysis.** The optimiser works from nominal dimensions, so every design it
-returns sits exactly on whatever limits you set. Compare & Safety will build that design
-a few hundred times with your shop's tolerances applied — core diameters varying
-independently because each is a separate reamer pass, the propellant batch varying as one
-draw because every grain comes from the same mix — and report how often it still stays
-legal. On the balanced design from the 5-inch study, with ±0.005 in on the throat and
-cores and 3% on the burn-rate coefficient, that is **51%**. Nominal is not a guarantee.
+Whatever `.ric` file is placed in `motor/` is the motor that gets optimised. No
+filename is significant. The folder ships empty and the application does nothing until
+a motor is placed there, since a motor design belongs to whoever made it and not in
+this repository.
 
-Uncertainty is declared against the hardware and the propellant, once, in the rail. It
-never needs to know what is being optimised, which is why it needs no per-run setup.
+For a motor to experiment with, `python tests/sample_motor.py motor/sample.ric` writes
+a generic six-grain KNSB motor.
 
-**Several searches, merged.** NSGA-II is stochastic and offers no guarantee it found the
-global front. Measured during development, on one motor: running the identical
-configuration three times with different seeds put best initial thrust 6.4% apart, and 17–62% of each run's front was strictly beaten by
-another run's. So a run now splits its budget across independent searches and reports the
-non-dominated set of everything they found. That is not just insurance, it is cheaper:
-three 4,800-simulation searches merged reached 6,984 N where a single 14,400-simulation
-search reached 6,775 N — **+3.1% for the same money**. The simulation budget and the number
-of searches are both set in the app; population and generations are derived from them.
+## What can be optimised
 
-**An analytic ceiling.** For initial thrust there is a bound no motor in the space can
-beat, and it needs no search: bound one grain's burning area over the whole box, multiply
-by the grain count (max of a sum ≤ sum of maxes — peak area is *not* monotone in each
-core, so the obvious argument fails), divide by the binding Kn to get the largest useful
-throat area, and multiply by the best achievable thrust coefficient and the pressure
-limit. On the 5-inch motor that ceiling is **7,517 N**, and the merged search reaches
-within 7.1% of it. That is the closest thing to assurance available here — the algorithm
-itself provides none.
+Grain outer diameter, length, count and the propellant are read from the `.ric` file
+and never modified. Nine dimensions can be varied:
 
-**Using the limits to prune.** Where the limits are closed-form, the app says what they
-rule out before anything is simulated. Burning area for uninhibited BATES is
-`π(d+2r)(L−2r) + (π/2)(D²−(d+2r)²)` through the whole burn, so peak Kn can be computed
-exactly rather than simulated — it tracks openMotor to within about 1%, and with that
-margin applied it becomes a screen that can never reject a design the simulator would
-accept. From it come two provable bounds: a **throat floor** (burning area is smallest
-with every core at its minimum, so if even that needs a wider throat, nothing narrower can
-ever be legal) and a **core ceiling**. Apply-tighter-bounds narrows the spec to them.
-
-The app also detects limits that are secretly the same limit. Chamber pressure is a
-monotone function of Kn, so a pressure ceiling and a Kn ceiling are one constraint: on the
-5-inch motor, 500 psi is reached at **Kn 224.5** against a Kn ceiling of 225, so pressure
-binds by a hair and raising Kn alone would change nothing.
-
-Worth being honest about the size of the win: on that configuration the chain runs
-4.5 × 10¹⁹ → 2.5 × 10¹⁹ → 2.1 × 10¹⁹, about 2×. The limits shrink the box far less than
-sorting the cores already did (694×). Pruning is worth doing because it costs
-microseconds instead of a simulation, not because it makes the space small.
-
-**Technical reports on demand.** Tick any finished runs in the report panel and press
-Generate. The document is written from the runs themselves — hardware and limits read off
-the motor and the spec, and the trade-off curve and option tables built from the
-verified designs. A run that found nothing gets the most attention: which limit could never be met, how close anything got, and — where
-burning area is closed-form — a proof that no core diameter would have worked, with the
-throat diameter that would. Two runs in one report are compared side by side. It is
-written as a PDF to `reports/` and opens in a new tab. That folder ships empty — what
-lands in it is your report about your motor, and is not committed.
-
-**Four visualization profiles**, switchable from the tab strip:
-
-| Profile | Shows |
+| Variable | Description |
 |---|---|
-| Design Review | thrust curve · pressure + Kn · scaled cross-section · spec sheet · margin bars |
-| Trade-off Explorer | clickable option front · every design tried · parallel coordinates · result spread · exportable options table |
-| Optimizer Diagnostics | search progress · which limit binds · model accuracy · which dimension matters |
-| Compare & Safety | before/after thrust · spec delta · per-grain mass flux · sensitivity tornado |
+| `core_1` … `core_6` | core diameter of each grain, numbered from the forward end |
+| `throat` | nozzle throat diameter |
+| `exit` | nozzle exit diameter, floored at 1.15 × throat |
+| `throat_length` | nozzle throat length |
 
-Nothing shown was merely predicted: the surrogate may propose and the search may
-run coarse, but every reported design is re-simulated at 0.002 s with all safety
-margins removed. A finished run keeps its own configuration, so editing the form
-afterwards cannot mislabel a result, and `?job=<id>` reopens it.
+Each dimension takes a machining step, such as 0.01 in or 1/16 in. The optimiser only
+returns values that fall on that grid. Bounds, objectives and limits are configured in
+the application, with defaults taken from the `.ric` file's own `maxPressure`,
+`maxMassFlux` and `minPortThroat` values.
 
-## Pipeline
+Sixteen metrics are available as objectives. Each can be maximised, minimised or
+driven toward a target value. Selecting two produces a trade-off curve rather than a
+single result.
+
+## How results are produced
+
+Two search modes are available. The fast mode runs a genetic search directly against
+openMotor. The trade-off mode samples the design space, trains surrogate models, runs
+NSGA-II against those models, and then re-simulates the survivors.
+
+Every design that appears in a result has been simulated in openMotor at the
+verification timestep with all search-time safety margins removed. Surrogate models
+influence which designs are proposed, never which are reported.
+
+The search runs at a 0.01 s timestep and verification at 0.002 s. The two disagree
+slightly and in different directions depending on the metric. Peak mass flux is a
+finite difference and grows as the timestep shrinks, total impulse is an integral, and
+pressure and Kn are invariant. `runner.timestep_bias` measures the ratio on the loaded
+motor and adjusts the search-time limits accordingly, so that a design sitting on a
+limit during the search still satisfies it after verification.
+
+A single search is not guaranteed to find the global front, so a run divides its
+budget across several independent searches and reports the non-dominated set of
+everything they find. The budget and the number of searches are both configurable.
+Population size and generation count are derived from them.
+
+## Two properties that reduce the search space
+
+Grain order does not affect the result. In openMotor's model, impulse, pressure and
+burn time depend only on the multiset of core diameters and not on their arrangement,
+which `scripts/verify_ordering.py` checks against the simulator. Order affects mass
+flux and port/throat ratio, and both are most favourable with the largest core aft.
+Cores are therefore stored sorted, which removes a 720-fold degeneracy.
+
+Several quantities are closed-form. Port/throat ratio, initial Kn, propellant mass and
+ignition chamber pressure are exact results for BATES geometry and are computed in
+`design.py` rather than learned. Only quantities that require integrating the whole
+burn are modelled. The application uses the same closed-form expressions to report the
+size of the configured design space, and to rule out regions that no legal motor can
+occupy before any simulation runs.
+
+## Output
+
+Each completed run writes a report to `reports/` as a PDF. The report is derived
+entirely from the run: hardware and limits are read from the motor and the
+configuration, and the trade-off curve and option tables are built from the verified
+designs. A run that finds no legal design is documented in the most detail, including
+which limit could not be met and, where burning area is closed-form, a proof that no
+core diameter would have satisfied it.
+
+A second document is available on request: one sheet per design on the trade-off
+curve, packaged as a zip archive.
+
+`outputs/` mirrors the most recent optimisation and nothing else. It is emptied and
+rewritten on every run, so its contents always describe the motor that was just
+optimised. It contains `result.json`, one `.ric` file per legal design, and the report
+figures. None of it is source, and none of it is committed.
+
+## Repository layout
+
+```
+app.py           entry point; starts the server and opens a browser
+bootstrap.py     builds the environment on a machine that has none of it
+app/
+  server.py      HTTP routes
+  jobs.py        background runs and their progress
+  static/        the interface
+src/rocketopt/
+  ric.py         reading and writing .ric files without PyQt
+  units.py       inch and millimetre conversion, fraction parsing, grid snapping
+  spec.py        variables, objectives and constraints as configured
+  design.py      design space, canonical form, closed-form features
+  simulate.py    headless openMotor runs reduced to metrics
+  sampling.py    Sobol and structured sampling, persistent worker pool
+  surrogate.py   per-target models, scoring, permutation importance
+  optimize.py    genetic search, Bayesian optimisation, NSGA-II
+  runner.py      one configuration to one verified set of results
+  sizing.py      how many distinct motors a configuration admits
+  tolerance.py   how a design behaves as built rather than as drawn
+  report.py      the technical report
+  bundle.py      one sheet per design, zipped
+  pdf.py         rendering a report to PDF
+motor/           the .ric file to optimise; ships empty, never committed
+reports/         generated reports; ships empty, never committed
+outputs/         the last run's data, rewritten every run, never committed
+docs/            the field guide
+tests/           machining grid, frozen dimensions, ordering rules
+vendor/openMotor cloned during setup, GPLv3, never committed
+```
+
+## Development
 
 ```bash
-python3 app.py                                # builds the environment, then runs
-
-.venv/bin/python scripts/verify_ordering.py   # prove the core-sorting assumption
+.venv/bin/python scripts/verify_ordering.py   # check the core-sorting assumption
 .venv/bin/python -m pytest tests/ -q
 ```
 
-`outputs/` mirrors the **last** optimisation and nothing else — it is emptied and
-rewritten every run, so a file in it always describes the motor you just optimised.
-You get `result.json` (spec, limits, every legal design, statistics), `motors/*.ric`
-you can open directly in openMotor, and `figures/*.png`. Nothing in it is source and
-none of it is committed; run the optimiser again and it all comes back.
-
-## Where the machine learning actually earns its keep
-
-A BATES simulation takes ~10 ms, so a surrogate is *not* needed to make search
-possible. It is used where it pays:
-
-- **Mapping the trade-off.** NSGA-II needs tens of thousands of evaluations to
-  produce a dense initial-thrust/impulse front. The surrogate supplies them in
-  seconds; every design on the reported front is then **re-simulated**, so no
-  model output is ever reported as a result.
-- **Sample efficiency.** Bayesian optimisation with a Gaussian process reaches a
-  comparable design in a few hundred simulations instead of thousands.
-- **Sensitivity.** Permutation importance says which levers matter, and by how
-  much.
-
-Initial thrust is very nearly analytic — it is set by initial Kn and throat area,
-which is why the surrogate predicts it to R² 0.9997. The genuinely learned
-quantities are total impulse, peak pressure and peak mass flux, which depend on
-how the burn evolves.
-
-## Layout
-
-```
-app.py           entry point -- starts the server, opens the browser
-app/
-  server.py      HTTP surface: load motor, defaults, run, poll, export
-  jobs.py        background runs and their progress
-  static/        the interface; charts.js declares the panels and profiles
-src/rocketopt/
-  ric.py         read/write .ric without PyQt
-  units.py       inch/mm conversion, shop-fraction parsing, grid snapping
-  spec.py        what the GUI configures: variables, objectives, constraints
-  design.py      design space, canonical form, closed-form features
-  simulate.py    headless openMotor runs reduced to metrics
-  sampling.py    Sobol + structured sampling, persistent worker pool
-  surrogate.py   per-target models, scoring, permutation importance
-  optimize.py    direct GA, Bayesian optimisation, NSGA-II + verification
-  runner.py      one configuration -> one verified set of results
-  sizing.py      how many distinct motors a configuration admits
-  tolerance.py   what a design does when it is built, not drawn
-  report.py      the technical report, derived entirely from the runs
-  report_style.py  the report stylesheet, kept as data
-  plotting.py    figures for the static report
-bootstrap.py     builds the environment on a machine that has none of it
-motor/           the .ric you want optimised; ships empty, never committed
-tests/           machining grid, frozen dimensions, ordering rules
-docs/            the field guide -- documentation, not generated artefacts
-reports/         ships empty; your reports land here, and are never committed
-outputs/         the last run's data, rewritten every run, never committed
-vendor/openMotor cloned at setup, GPLv3, never committed
-```
-
-## Search fidelity
-
-The search runs at a 0.01 s timestep and verification at 0.002 s. Those disagree
-slightly, and in different directions per metric: peak mass flux is a finite
-difference so it grows as the timestep shrinks (-0.68% at 0.01 s), total impulse
-is an integral (-0.18%), and pressure and Kn are exactly invariant. Rather than
-guess a safety margin, `runner.timestep_bias` measures the ratio on your own
-motor and restates the search-time limits by it, so a design sitting on a limit
-during the search is still sitting on it after verification.
-
 ## Licence
 
-This project is MIT (see `LICENSE`). openMotor is GPLv3 and is **not** redistributed
-here — `setup_env.sh` clones it at a pinned commit. Read [`NOTICE.md`](NOTICE.md) before
-making this repository public: the code imports `motorlib` directly, and whether that
-makes it a derivative work is the usual unsettled question about linking to GPL code.
+This project is MIT licensed; see `LICENSE`. openMotor is GPLv3 and is not
+redistributed here. Setup clones it at a pinned commit. [`NOTICE.md`](NOTICE.md)
+records the third-party components and one local modification setup may make.

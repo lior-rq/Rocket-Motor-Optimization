@@ -164,9 +164,10 @@ footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--rule);
   <p class="eyebrow">Lior's Really Good™ Rocket Optimizer</p>
   <h1>Optimizer Field Guide</h1>
   <p class="byline">Created by Lior Benshoshan</p>
-  <p class="lede">It takes an openMotor <code>.ric</code>, searches every buildable
-  variation of it against your limits, and hands back motors you can open in
-  openMotor and machine to the numbers. Here is how to drive it.</p>
+  <p class="lede">The optimizer takes an openMotor <code>.ric</code> file, searches the
+  buildable variations of it against a set of limits, and returns motors that can be
+  opened in openMotor and machined to the numbers given. This guide covers the
+  interface panel by panel.</p>
 </header>
 
 <hr class="rule">
@@ -176,132 +177,135 @@ footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--rule);
 <pre>cd "Rocket Optimization"
 python3 app.py                   <span style="color:var(--ink-3)"># opens http://localhost:8420</span></pre>
   <div class="prose">
-  <p>That is the whole install. The first time, it says it needs to build an environment
-  and waits for you to agree: a <code>.venv</code> in this folder, the packages in
-  <code>requirements.txt</code>, and a pinned clone of openMotor. Nothing outside the
-  folder is touched and your system Python is left alone. It needs
-  <strong>Python 3.9 to 3.12</strong> and <code>git</code>. A C compiler is optional:
-  openMotor has one compiled module that nothing in a BATES burn ever calls, so without
-  a compiler setup writes a pure-Python stand-in and the app runs normally.</p>
+  <p>That command is the entire install. On the first run it asks for confirmation
+  before building an environment: a <code>.venv</code> in the project folder, the packages
+  listed in <code>requirements.txt</code>, and a clone of openMotor pinned to a known
+  commit. Nothing outside the project folder is modified. The requirements are
+  <strong>Python 3.9 to 3.12</strong> and <code>git</code>. A C compiler is optional,
+  because the one compiled module in openMotor is never called during a BATES
+  simulation. Without a compiler, setup substitutes a pure-Python stand-in.</p>
   <div class="note warn">
     <span class="lbl">Why 3.12 and not newer</span>
-    <p>The pinned numpy, scipy and scikit-image publish wheels up to 3.12 only. PyPI does
-    not record that as an upper bound, so on 3.13 pip does not refuse &mdash; it tries to
-    compile numpy from source, which needs a C and Fortran toolchain and fails on most
-    machines with a meson error that never mentions your Python version. Setup checks the
-    range up front, and uses a supported interpreter if you have one installed alongside
-    the newer one.</p>
+    <p>The pinned numpy, scipy and scikit-image versions publish wheels up to Python 3.12
+    only. PyPI does not record this as an upper bound, so on 3.13 pip attempts a source
+    build of numpy instead of refusing. That build requires a C and Fortran toolchain and
+    fails on most machines, with a meson error that never mentions the Python version.
+    Setup checks the range before installing anything, and will use a supported
+    interpreter if one is installed alongside a newer one.</p>
   </div>
   </div>
   <div class="prose">
-  <p>It loads whatever <code>.ric</code> is in <code>motor/</code> on start &mdash; drop
-  yours in and it is the one that opens, whatever it is called. The folder starts empty
-  and there is nothing to optimise until you put a motor there;
-  <code>python tests/sample_motor.py motor/sample.ric</code> writes a throwaway one if
-  you just want to try it. <strong>Change</strong>
-  in the header picks a different file. Whatever you load is simulated exactly as the
-  file says &mdash; the app never edits your motor behind your back.</p>
+  <p>On start the application loads whatever <code>.ric</code> file is in
+  <code>motor/</code>. No filename is significant. The folder ships empty, so there is
+  nothing to optimise until a motor is placed there.
+  <code>python tests/sample_motor.py motor/sample.ric</code> writes a generic one for
+  experimenting. <strong>Change</strong> in the header selects a different file. A loaded
+  motor is simulated exactly as its file specifies; the application never modifies it.</p>
   </div>
   <div class="note tip">
     <span class="lbl">The short version</span>
-    <p>Load a motor → tick what may change and give each a step → say what you want
-    more of → set your limits → press <strong>Optimize</strong> → pick a design off the
-    curve → export the <code>.ric</code>. Everything below is detail on those seven moves.</p>
+    <p>Load a motor, select which dimensions may change and give each a step, choose
+    what to optimise, set the limits, press <strong>Optimize</strong>, select a design from
+    the curve, and export the <code>.ric</code>. The rest of this guide details those
+    steps.</p>
   </div>
 </section>
 
 <hr class="rule">
 
 <section>
-  <h2>The panels, in the order you use them</h2>
+  <h2>The panels, in order</h2>
 
   <ol class="steps">
     <li>
-      <span class="panel-name">Your motor</span>
-      <h3>Check what you loaded</h3>
-      <p>Grains, bore, nozzle, propellant, and what the motor does as it stands:
-      thrust, impulse, peak pressure, Kn, mass flux. Warnings from openMotor appear
-      here too &mdash; an over-expanded nozzle shows up as <em>low exit pressure</em>.</p>
-      <p>Read these numbers before anything else. If the motor as loaded already breaks
-      a limit, the optimizer is not fixing a small problem, it is looking for a
-      different motor.</p>
+      <span class="panel-name">Loaded motor</span>
+      <h3>Check the loaded motor</h3>
+      <p>Grains, bore, nozzle and propellant, along with the motor's performance as it
+      stands: thrust, impulse, peak pressure, Kn and mass flux. Warnings from openMotor
+      appear here as well. An over-expanded nozzle is reported as <em>low exit
+      pressure</em>.</p>
+      <p>These numbers are worth reading first. A motor that already breaks a limit as
+      loaded is not a small problem to correct, and the search will be looking for a
+      substantially different motor.</p>
     </li>
 
     <li>
       <span class="panel-name">Fixed hardware</span>
       <h3>Confirm the case</h3>
       <p>Grain outer diameter, length and count are read from the file and shown
-      greyed out. They are the tube and the mould &mdash; not optimizable, and not
-      editable here. Change them in openMotor and reload.</p>
-      <p>Inhibited ends is the one control that <em>is</em> live, because it is a
-      casting choice rather than hardware. If anything has been overridden, the panel
-      says <strong>modified from file</strong> and offers <strong>Reset to file</strong>.</p>
+      greyed out. These represent the case and the mould, so they are neither optimised
+      nor editable here. They can be changed in openMotor and the file reloaded.</p>
+      <p>Inhibited ends is the one live control in this panel, being a casting choice
+      rather than a hardware constraint. Where a value has been overridden, the panel
+      reports <strong>modified from file</strong> and offers <strong>Reset to
+      file</strong>.</p>
     </li>
 
     <li>
       <span class="panel-name">What may change</span>
-      <h3>Unlock dimensions and set your machining grid</h3>
-      <p>One row per dimension: six grain cores, nozzle throat, nozzle exit, throat
-      length. Untick a row to hold it at its current value; a held dimension leaves the
-      search entirely rather than being searched over a zero-width range.</p>
-      <p><strong>Step</strong> is your machining grid, and it is the field people skip.
-      Type <code>0.01</code>, <code>1/16</code>, <code>1 1/16</code>, or <code>2-1/2</code>
-      &mdash; shop fractions parse. Leave it blank and the optimizer will hand you a
-      2.4713″ core. The grid is anchored at zero, so a 1/16″ step offers whole
-      sixteenths rather than sixteenths measured from wherever your lower bound
-      happened to sit.</p>
-      <p>The chips below set every step at once. <code>0.01″</code> is two decimal
-      places, which is the finest most people hold.</p>
+      <h3>Unlock dimensions and set the machining grid</h3>
+      <p>One row per dimension: six grain cores, nozzle throat, nozzle exit and throat
+      length. Unticking a row holds that dimension at its current value and removes it
+      from the search entirely, rather than searching it over a zero-width range.</p>
+      <p><strong>Step</strong> sets the machining grid. It accepts decimals and shop
+      fractions, so <code>0.01</code>, <code>1/16</code>, <code>1 1/16</code> and
+      <code>2-1/2</code> are all valid. Left blank, the optimiser returns arbitrary
+      values such as a 2.4713&Prime; core. The grid is anchored at zero, so a
+      1/16&Prime; step yields whole sixteenths rather than sixteenths measured from
+      the lower bound.</p>
+      <p>The buttons below the table set every step at once. <code>0.01&Prime;</code>
+      is two decimal places, which is the finest tolerance commonly held.</p>
     </li>
 
     <li>
       <span class="panel-name">Possible configurations</span>
       <h3>See how big the problem is</h3>
-      <p>Updates live. It counts <em>distinct motors</em>, not grid points: cores are
-      stored sorted, so one set of six diameters is one motor rather than 720. On the
-      5-inch motor with all nine dimensions free on a 0.01″ grid that is
-      <strong>4.5&nbsp;×&nbsp;10¹⁹</strong>, and brute force would take 4.4&nbsp;×&nbsp;10¹⁰ years.</p>
-      <p>With a Kn limit set, it also shows what the limits provably rule out and offers
-      <strong>Apply tighter bounds</strong>. That narrows the search to a region where a
-      legal motor can still exist &mdash; it never removes anything legal.</p>
+      <p>This panel updates as the configuration changes. It counts <em>distinct
+      motors</em> rather than grid points, since cores are stored sorted and one set of
+      six diameters therefore represents one motor rather than 720. The figure reaches
+      the order of 10¹⁹ for nine free dimensions on a 0.01&Prime; grid, which is why the
+      application uses a genetic search rather than enumeration.</p>
+      <p>Where a Kn limit is set, the panel also reports what the limits provably exclude
+      and offers <strong>Apply tighter bounds</strong>, which narrows the search to the
+      region where a legal motor can still exist. Nothing legal is removed.</p>
     </li>
 
     <li>
       <span class="panel-name">What to optimize</span>
-      <h3>Say what you want more of</h3>
-      <p>Any of sixteen metrics, each set to maximize, minimize, or hit a target. Tick
-      two and you get a trade-off curve instead of a single answer, which is almost
-      always what you want &mdash; thrust and impulse pull against each other, and the
-      interesting question is where on that curve you want to sit.</p>
-      <p>The presets cover the common cases: <em>Max initial thrust</em>,
-      <em>Max impulse</em>, <em>Flattest curve</em>, <em>Thrust vs impulse</em>.</p>
+      <h3>Choose the objectives</h3>
+      <p>Any of sixteen metrics, each set to maximise, minimise or reach a target value.
+      Selecting two produces a trade-off curve rather than a single answer. Thrust and
+      impulse oppose each other, so the useful question is usually which point on that
+      curve to build.</p>
+      <p>Presets are provided for the common cases: <em>Max initial thrust</em>,
+      <em>Max impulse</em>, <em>Flattest curve</em> and <em>Thrust vs impulse</em>.</p>
     </li>
 
     <li>
       <span class="panel-name">Limits it must respect</span>
       <h3>Set the envelope</h3>
-      <p>Rows of <em>metric</em> ≤ or ≥ <em>value</em>. They start from your <code>.ric</code>'s
-      own <code>maxPressure</code>, <code>maxMassFlux</code> and <code>minPortThroat</code>.
-      Untick one to ignore it; add your own with <strong>+ add</strong>.</p>
-      <p>Nothing is reported unless it clears every ticked limit when re-simulated at
-      full fidelity with all safety margins removed.</p>
+      <p>Rows of <em>metric</em> ≤ or ≥ <em>value</em>, initialised from the loaded
+      file's own <code>maxPressure</code>, <code>maxMassFlux</code> and
+      <code>minPortThroat</code> settings. Unticking a row ignores that limit, and
+      <strong>+ add</strong> introduces further ones.</p>
+      <p>No design is reported unless it satisfies every ticked limit when re-simulated
+      at full fidelity with all safety margins removed.</p>
     </li>
 
     <li>
       <span class="panel-name">Grain cores</span>
       <h3>Choose an ordering rule</h3>
-      <p>Four options, and they change the answer more than people expect:</p>
+      <p>Four options. The choice has a material effect on the result:</p>
       <div class="scroll" style="margin-top:12px">
       <table>
         <tbody>
-          <tr><td>Any order</td><td>No rule. Rarely what you want &mdash; the aft grain
-            ends up choking.</td></tr>
-          <tr><td>Never narrow aft</td><td>Cores never shrink going aft, ties allowed.
-            The default, and what your current motor already does.</td></tr>
-          <tr><td>Strictly wider</td><td>Each core exceeds the one ahead by a minimum
-            you set. Costs about 0.8 points of thrust versus allowing ties.</td></tr>
-          <tr><td>Paired mandrels</td><td>A few sizes shared across grains &mdash;
-            3&nbsp;sizes&nbsp;×&nbsp;2&nbsp;grains, say. Fewer mandrels to cut.</td></tr>
+          <tr><td>Any order</td><td>No rule. Tends to choke the aft grain.</td></tr>
+          <tr><td>Never narrow aft</td><td>Cores do not shrink going aft, ties allowed.
+            This is the default.</td></tr>
+          <tr><td>Strictly wider</td><td>Each core exceeds the one ahead by a set
+            minimum. Costs roughly 0.8% of thrust compared with allowing ties.</td></tr>
+          <tr><td>Paired mandrels</td><td>A small number of sizes shared across grains,
+            such as three sizes across six grains. Requires fewer mandrels.</td></tr>
         </tbody>
       </table>
       </div>
@@ -310,14 +314,18 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     <li>
       <span class="panel-name">How hard to look</span>
       <h3>Set the budget and the number of searches</h3>
-      <p>Quick / Standard / Thorough set a simulation budget (3,600 / 14,400 / 43,200),
-      or type your own. <strong>Independent searches</strong> splits that budget across
-      separate runs and merges what they find.</p>
-      <p>Raise the search count before the budget. Three 4,800-simulation searches
-      merged beat a single 14,400-simulation search on the same motor &mdash; better
-      answer, same cost.</p>
-      <p><em>Map the full trade-off</em> trains surrogate models first. Slower, but it
-      maps a denser curve. For most work the plain search is enough.</p>
+      <p>Quick, Standard and Thorough set a simulation budget of 3,600, 14,400 or
+      43,200 respectively, and a custom figure can be entered instead.
+      <strong>Independent searches</strong> divides that budget across separate runs and
+      merges their results.</p>
+      <p>Increasing the number of searches is generally more effective than increasing
+      the budget. On one test motor, three merged searches of 4,800 simulations produced
+      a better result than a single search of 14,400 at the same total cost.</p>
+      <p><em>Map the full trade-off</em> trains surrogate models before searching. This
+      is slower but produces a denser curve. The plain search is sufficient for most
+      work.</p>
+      <p><strong>Cores to use</strong> sets how many simulations run at once. The
+      default leaves two cores free so the machine remains usable during a search.</p>
     </li>
   </ol>
 </section>
@@ -327,134 +335,100 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
 <section>
   <h2>Reading the results</h2>
   <div class="prose">
-  <p>Four profiles across the top of the workspace. Same run, four questions.</p>
+  <p>Four profiles are available across the top of the workspace, presenting the same
+  run from different angles.</p>
   </div>
   <div class="cards">
     <div class="card">
       <span class="tag">one motor</span>
       <h3>Design Review</h3>
       <p>Thrust curve, chamber pressure and Kn, a scaled cross-section, the spec sheet,
-      and margin bars showing how close it runs to each limit. Amber means within 3% of
-      a limit.</p>
+      and margin bars showing proximity to each limit. Amber indicates a design within 3%
+      of a limit.</p>
     </div>
     <div class="card">
       <span class="tag">all of them</span>
       <h3>Trade-off Explorer</h3>
-      <p>The curve of options &mdash; click any point to load it into Design Review.
-      Plus every design tried, a parallel-coordinates view of what the good ones have
-      in common, and a table with a <code>.ric</code> button on every row.</p>
+      <p>The curve of options, where any point can be clicked to load it into Design
+      Review. Also shows every design attempted, a parallel-coordinates view of what the
+      successful designs have in common, and a table with a <code>.ric</code> export
+      button on each row.</p>
     </div>
     <div class="card">
       <span class="tag">the search</span>
       <h3>Optimizer Diagnostics</h3>
-      <p>Progress against simulations spent, which limit is actually binding, and — in
-      trade-off mode — how accurate the models were and which dimension matters most.</p>
+      <p>Progress against simulations spent and which limit is binding. In trade-off
+      mode it also reports model accuracy and which dimension has the greatest
+      influence.</p>
     </div>
     <div class="card">
       <span class="tag">before and after</span>
       <h3>Compare &amp; Safety</h3>
-      <p>Your motor against the selected design, a spec delta table, mass flux in each
-      grain against its limit, and a tornado of what moves the leading objective.</p>
+      <p>The loaded motor against the selected design, a specification delta table,
+      mass flux in each grain against its limit, and a tornado chart of what most affects
+      the leading objective.</p>
     </div>
   </div>
   <div class="note">
-    <span class="lbl">Which limit is holding you back</span>
-    <p>The bar chart in Diagnostics is the most useful panel in the app when a result
-    disappoints. It shows what share of legal designs sit within 2% of each limit. A bar
-    near zero means that limit is doing nothing; a red bar is the number to revisit.</p>
+    <span class="lbl">Identifying the binding limit</span>
+    <p>When a result is disappointing, the bar chart in Diagnostics is the panel to
+    consult. It reports what share of legal designs sit within 2% of each limit. A bar
+    near zero indicates a limit that is not constraining the search. A red bar indicates
+    the limit worth revisiting.</p>
   </div>
 </section>
 
 <hr class="rule">
 
 <section>
-  <h2>Exporting and writing it up</h2>
+  <h2>Exporting and reporting</h2>
   <div class="prose">
-  <p>Every row of the options table has a <code>.ric</code> button. The file opens in
-  openMotor and re-simulates to exactly the numbers shown &mdash; nothing on screen is a
-  model prediction.</p>
-  <p>The report writes the whole study up: hardware, limits, the trade-off curve,
-  tabulated options and geometry, all derived from the run rather than boilerplate. A run
-  that found nothing gets the most attention &mdash; which limit could never be met, how
-  close anything came, and what would have to change.</p>
-  <p>Every run writes its own report &mdash; there is no button for it, because a
-  report you have to remember to ask for is one you will not have. It lands as
-  <code>reports/report.pdf</code>. <strong>Download every design</strong> gives you the
-  other document: one sheet per design on the curve, with the numbers you would machine
-  to, zipped so you can send the set. Meanwhile <code>outputs/</code> is emptied and
-  rewritten with the run you just did &mdash; its result, its motors as
-  <code>.ric</code>, its figures.</p>
+  <p>Every row of the options table carries a <code>.ric</code> export button. The
+  exported file opens in openMotor and re-simulates to exactly the figures displayed, as
+  nothing shown in the interface is a model prediction.</p>
+  <p>Each completed run writes its own report to <code>reports/report.pdf</code>
+  automatically. The report covers hardware, limits, the trade-off curve, tabulated
+  options and geometry, all derived from the run itself. A run that finds no legal design
+  is documented in the greatest detail, covering which limit could not be met, how close
+  the search came, and what would have to change.</p>
+  <p><strong>Download every design</strong> produces a second document: one sheet per
+  design on the curve, giving the dimensions to machine to, packaged as a zip archive.
+  Separately, <code>outputs/</code> is emptied and rewritten with the most recent run,
+  holding its result, its designs as <code>.ric</code> files, and its figures.</p>
   </div>
 </section>
 
 <hr class="rule">
 
 <section>
-  <h2>Five things worth understanding</h2>
+  <h2>Definitions</h2>
 
   <dl class="ref">
     <dt>Initial thrust</dt>
     <dd>The mean of the thrust curve over the first 0.35&nbsp;s, excluding openMotor's
-      zero-thrust sample at t&nbsp;=&nbsp;0. Not peak thrust, and not thrust at ignition.</dd>
+      zero-thrust sample at t&nbsp;=&nbsp;0. This is neither peak thrust nor thrust at
+      ignition.</dd>
 
     <dt>Legal</dt>
     <dd>Re-simulated at a 0.002&nbsp;s timestep with every search-time margin removed,
-      and clearing each ticked limit on <em>those</em> numbers.</dd>
+      and satisfying each ticked limit on those figures.</dd>
 
     <dt>Kn and pressure</dt>
-    <dd>One constraint wearing two hats — pressure is a monotone function of Kn. On this
-      propellant 500&nbsp;psi is reached at <strong>Kn&nbsp;224.5</strong>, so a Kn ceiling
-      of 225 is the looser of the two and raising it alone changes nothing.</dd>
+    <dd>Effectively one constraint, since chamber pressure is a monotone function of Kn
+      for a given propellant. Setting both means one of the two binds and the other has no
+      effect. The application reports the Kn at which the pressure limit is reached, so
+      the redundant limit can be identified.</dd>
 
     <dt>Seeds</dt>
-    <dd>The search is stochastic. Identical runs have landed 6.4% apart on best thrust,
-      which is why several run and merge by default. One search is a sample of the
-      answer, not the answer.</dd>
+    <dd>The search is stochastic, and identical configurations have produced results
+      several percent apart on best thrust. Several searches therefore run and merge by
+      default. A single search should be treated as one sample of the answer.</dd>
 
     <dt>Grain order</dt>
-    <dd>In openMotor's model, order changes nothing except mass flux and port/throat,
-      and both are best with the widest core aft. So cores are always stored sorted,
-      which removes a 720-fold redundancy from the search.</dd>
+    <dd>In openMotor's model, grain order affects only mass flux and port/throat ratio,
+      and both are most favourable with the widest core aft. Cores are therefore stored
+      sorted, removing a 720-fold redundancy from the search.</dd>
   </dl>
-</section>
-
-<hr class="rule">
-
-<section>
-  <h2>Worked example</h2>
-  <div class="prose">
-  <p>The 5-inch motor: six 5.00&nbsp;×&nbsp;6.00&nbsp;in BATES grains, Mad River Blue,
-  uninhibited ends. As loaded it runs at 860&nbsp;psi and Kn&nbsp;323 &mdash; well outside
-  a 500&nbsp;psi / Kn&nbsp;225 / 1.05&nbsp;lb·in⁻²s⁻¹ envelope.</p>
-  <p>All nine dimensions free on a 0.01″ grid, both thrust and impulse maximized,
-  99,840 simulations across eight searches, 54 minutes:</p>
-  </div>
-  <div class="scroll">
-  <table>
-    <caption>Seven options off a 60-design front. Row 4 has the highest ISP and holds
-    90% of the best thrust with 86% of the best impulse.</caption>
-    <thead><tr><th class="n">#</th><th>Class</th><th class="n">Initial N</th>
-      <th class="n">Impulse N·s</th><th class="n">ISP</th><th class="n">psi</th>
-      <th class="n">Kn</th><th>Cores (in)</th><th class="n">Throat</th></tr></thead>
-    <tbody>
-      <tr><td class="n">1</td><td>N4165</td><td class="n">7,194</td><td class="n">11,429</td><td class="n">181.9</td><td class="n">497</td><td class="n">224</td><td>3.58 3.84 4.00 4.11 4.24 4.48</td><td class="n">1.75</td></tr>
-      <tr><td class="n">2</td><td>N5315</td><td class="n">6,944</td><td class="n">17,730</td><td class="n">196.0</td><td class="n">495</td><td class="n">223</td><td>3.37 3.44 3.49 3.52 3.60 3.89</td><td class="n">1.72</td></tr>
-      <tr><td class="n">3</td><td>O5200</td><td class="n">6,700</td><td class="n">22,164</td><td class="n">197.5</td><td class="n">497</td><td class="n">224</td><td>2.97 2.99 3.05 3.06 3.19 3.38</td><td class="n">1.68</td></tr>
-      <tr><td class="n">4</td><td>O5459</td><td class="n">6,455</td><td class="n">25,014</td><td class="n">197.8</td><td class="n">497</td><td class="n">224</td><td>2.59 2.76 2.76 2.78 2.79 2.98</td><td class="n">1.65</td></tr>
-      <tr><td class="n">5</td><td>O4788</td><td class="n">6,190</td><td class="n">26,995</td><td class="n">197.5</td><td class="n">493</td><td class="n">222</td><td>2.33 2.36 2.42 2.43 2.62 2.89</td><td class="n">1.63</td></tr>
-      <tr><td class="n">6</td><td>O3976</td><td class="n">5,859</td><td class="n">28,462</td><td class="n">194.8</td><td class="n">494</td><td class="n">223</td><td>1.82 1.84 1.90 2.33 2.58 2.80</td><td class="n">1.60</td></tr>
-      <tr><td class="n">7</td><td>O3441</td><td class="n">5,550</td><td class="n">29,141</td><td class="n">191.9</td><td class="n">478</td><td class="n">218</td><td>1.44 1.47 1.87 2.14 2.44 2.70</td><td class="n">1.60</td></tr>
-    </tbody>
-  </table>
-  </div>
-  <div class="note">
-    <span class="lbl">How good is 7,194 N?</span>
-    <p>There is an arithmetic ceiling for this motor that no search can beat: bound one
-    grain's burning area over the whole box, multiply by six, divide by the binding Kn
-    to get the largest useful throat area, multiply by the best achievable thrust
-    coefficient and the pressure limit. That gives <strong>7,517&nbsp;N</strong>. The
-    search got within 4.3% of a number nothing in the space can exceed.</p>
-  </div>
 </section>
 
 <hr class="rule">
@@ -462,26 +436,27 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
 <section>
   <h2>Running it without the app</h2>
   <div class="prose">
-  <p>Everything the app does is a library call: <code>rocketopt.runner.run</code> takes a
-  spec and a motor and hands back verified designs, and <code>rocketopt.report</code> and
-  <code>rocketopt.bundle</code> turn those into the PDFs. The app is a thin layer over
-  them, so anything it does can be scripted.</p>
+  <p>The application is a thin layer over the library, so its behaviour can be
+  scripted. <code>rocketopt.runner.run</code> takes a configuration and a motor and
+  returns verified designs. <code>rocketopt.report</code> and
+  <code>rocketopt.bundle</code> render those into PDFs.</p>
   </div>
 <pre>scripts/verify_ordering.py     check the core-sorting assumption against the simulator
 .venv/bin/python -m pytest tests/ -q</pre>
   <div class="note warn">
-    <span class="lbl">If a run comes back empty</span>
-    <p>That is a result, not a failure. Check Diagnostics for which limit was violated
-    by everything, and read the report's <em>no answer</em> section &mdash; for a fixed
-    nozzle it will tell you the throat diameter that would make a legal motor possible,
-    and prove no core diameter could have.</p>
+    <span class="lbl">If a run returns no designs</span>
+    <p>An empty result is itself a finding rather than a failure. Diagnostics reports
+    which limit every candidate violated, and the report's <em>no answer</em> section
+    covers the same ground in more detail. Where the nozzle is fixed, it gives the throat
+    diameter that would permit a legal motor and demonstrates that no core diameter could
+    have achieved one.</p>
   </div>
 </section>
 
 <footer>
-  openMotor 0.6.2 (GPLv3, vendored unmodified) · every number in this guide came from a
-  simulation, not a model<br>
-  App at <code>http://localhost:8420</code> · outputs under <code>outputs/</code><br>
+  openMotor 0.6.2, GPLv3, cloned during setup rather than redistributed<br>
+  Application at <code>http://localhost:8420</code>. Reports in <code>reports/</code>,
+  run data in <code>outputs/</code><br>
   Lior&#8217;s Really Good&#8482; Rocket Optimizer · created by Lior Benshoshan
 </footer>
 </div>

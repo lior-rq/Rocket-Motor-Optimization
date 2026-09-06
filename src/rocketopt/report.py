@@ -307,7 +307,7 @@ def make_figures(runs: Sequence[ReportRun], base_motor: Dict,
                 ax.scatter([display(ax_x, baseline[ax_x])],
                            [display(ax_y, baseline[ax_y])], s=126, marker="D",
                            color=LIMIT, edgecolors=SURFACE, linewidths=1.5, zorder=5)
-                ax.annotate("your motor as loaded", xy=(display(ax_x, baseline[ax_x]),
+                ax.annotate("the motor as loaded", xy=(display(ax_x, baseline[ax_x]),
                                                         display(ax_y, baseline[ax_y])),
                             xytext=(-14, -34), textcoords="offset points", ha="right",
                             fontsize=9, color=LIMIT, fontweight="600",
@@ -315,7 +315,7 @@ def make_figures(runs: Sequence[ReportRun], base_motor: Dict,
                                             linewidth=0.9, shrinkA=0, shrinkB=6))
             ax.set_xlabel(_axis(ax_x))
             ax.set_ylabel(_axis(ax_y))
-            ax.set_title("What this motor can do inside your limits")
+            ax.set_title("What this motor can do inside the configured limits")
             ax.legend(loc="lower left")
             _tidy(ax)
             made[key + "_front"] = _save(fig, out_dir / (key + "_front.png"))
@@ -450,12 +450,12 @@ def _header(title, runs, base_motor, grain, baseline) -> str:
     lede = ("Two optimisations of the same motor." if len(runs) > 1
             else "An optimisation of the motor as loaded.")
     if not any(r.feasible for r in runs):
-        lede += " No legal design exists under these limits — the section below explains why."
+        lede += (" No legal design exists under these limits. The section below explains why.")
     elif not all(r.feasible for r in runs):
-        lede += (" One of them has no answer at all; the other gives you a curve to "
-                 "choose from.")
+        lede += (" One of them has no answer at all. The other produces a curve "
+                 "of options.")
     else:
-        lede += " The result is a trade-off, not a single motor."
+        lede += " The result is a trade-off rather than a single motor."
     return """<header>
   <p class="eyebrow">openMotor · {n} × BATES {d} × {l} in · {prop} · {brief}</p>
   <h1>{title}</h1>
@@ -536,7 +536,7 @@ def _fixed_section(runs, base_motor, grain, nozzle) -> str:
     per_run = ""
     if len(runs) > 1:
         per_run = "".join(
-            '<h3 style="margin-top:30px">{} — searched</h3>{}'.format(
+            '<h3 style="margin-top:30px">{}: searched</h3>{}'.format(
                 esc(r.label),
                 dl([(name, describe(var)) for name, var in collapse(r.spec.variables)]))
             for r in runs)
@@ -582,7 +582,7 @@ def _infeasible_section(run, key, base_motor, figures) -> str:
     parts = ['<section><h2>{}: no answer</h2><div class="prose">'.format(esc(run.label))]
 
     if worst:
-        parts.append("<p><strong>{}</strong> was the binding failure — {:.0f}% of every "
+        parts.append("<p><strong>{}</strong> was the binding failure, at {:.0f}% of every "
                      "design tried broke it.</p>".format(
                          esc(worst["label"]), 100 * worst.get("violated_fraction", 0)))
     if closest:
@@ -683,12 +683,12 @@ def _feasible_section(run, key, base_motor, figures) -> str:
     return """<section>
   <h2>{label}: {n} legal motors</h2>
   <div class="prose"><p>The objectives pull against one another across the whole set, so
-  the result is a curve rather than a winner. Row {pick} is the balanced pick — it
-  concedes the least on any single objective.</p></div>
+  the result is a curve rather than a single winner. Row {pick} is the balanced choice,
+  conceding the least on any one objective.</p></div>
   {front}
   <div class="scroll"><table>
-    <caption>{n2} options spread along the curve, not the top {n2} — those would be
-    variations on one motor.</caption>
+    <caption>{n2} options spread along the curve, rather than the top {n2}, which would
+    be variations on a single motor.</caption>
     <thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>
   <div class="scroll"><table>
     <caption>Geometry for the same options. Cores run forward to aft.</caption>

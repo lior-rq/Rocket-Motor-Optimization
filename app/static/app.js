@@ -76,7 +76,7 @@ const App = (() => {
     wireChrome();
     await loadDefaults();
     // A finished run can be reopened by its id, which makes a result something
-    // you can bookmark or hand to someone else on the same machine.
+    // a bookmarkable address for a run in progress on this machine.
     const params = new URLSearchParams(location.search);
     if (params.get('profile')) state.profile = params.get('profile');
     const job = params.get('job');
@@ -258,7 +258,7 @@ const App = (() => {
     state.results = null;
     $('#panels').hidden = true; $('#emptyState').hidden = false;
     await loadDefaults(await res.json());
-    toast('Hardware applied — bounds and baseline updated');
+    toast('Hardware applied. Bounds and baseline updated.');
   }
 
   function renderConfig() {
@@ -538,7 +538,7 @@ const App = (() => {
        <strong>${machine.rate || '?'}</strong> simulations a second
        ${machine.rate_source === 'measured' ? '(measured here)' : '(estimated)'}.
        Automatic leaves two alone so the computer stays usable; taking every core
-       is worth a little more if you are not using it for anything else.`;
+       is worth a little more when the machine is otherwise idle.`;
   }
 
   /* ----------------------------------------------------------- validate */
@@ -663,7 +663,7 @@ const App = (() => {
     validate();
     const what = (data.changes || []).map(c =>
       `${c.variable} to ${(c.to / 0.0254).toFixed(2)}″`).join(', ');
-    toast(what ? `Narrowed ${what} — nothing legal was removed` : 'Already as tight as it gets');
+    toast(what ? `Narrowed ${what}. Nothing legal was removed.` : 'Already as tight as it gets');
   }
 
   // Say how much the number is worth. Before a run of this kind has finished,
@@ -671,8 +671,8 @@ const App = (() => {
   // far more than one that burns for a fraction of one, so it is only rough.
   function estQuality(est) {
     return est.calibrated
-      ? '(calibrated on your last run of this kind)'
-      : '(rough until you have run one of these)';
+      ? '(calibrated on the last run of this kind)'
+      : '(rough until one of these has been run)';
   }
 
   function fmtDuration(seconds) {
@@ -738,7 +738,7 @@ const App = (() => {
     // The claim "actually been simulated" is only true on the simulator path;
     // in trade-off mode these are model predictions, verified later.
     const dot = t.surrogate
-      ? 'Every dot is a motor the trained model has scored — the winners get '
+      ? 'Every dot is a motor the trained model has scored. The winners are '
         + 'simulated for real at the end.'
       : 'Every dot is a motor that has actually been simulated.';
     const best = t.single_objective
@@ -985,7 +985,7 @@ const App = (() => {
     a.download = 'optimized_' + (design.designation || ('option' + (index + 1))) + '.ric';
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(url);
-    toast('Saved .ric — open it in openMotor');
+    toast('Saved .ric. Open it in openMotor.');
   }
 
   function renderEmptyPreview() {

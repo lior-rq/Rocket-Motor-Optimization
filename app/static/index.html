@@ -53,15 +53,15 @@
   <aside class="rail" id="rail">
 
     <section class="card">
-      <h2>Your motor</h2>
+      <h2>Loaded motor</h2>
       <dl class="specs" id="motorSpecs"></dl>
       <div class="warnings" id="motorWarnings"></div>
     </section>
 
     <section class="card">
       <h2>Fixed hardware</h2>
-      <p class="hint">Read from your .ric and never changed &mdash; not by the
-        optimizer, not by this app.</p>
+      <p class="hint">Read from the .ric file and never changed, either by the optimizer
+        or by this application.</p>
       <table class="vars hardware">
         <tbody>
           <tr><td class="var-name">Grain outer diameter</td>
@@ -94,9 +94,9 @@
           <button type="button" class="link" data-all="fixed">all fixed</button>
         </div>
       </div>
-      <p class="hint">Untick a row to hold it at your current value. <strong>Step</strong>
-        is your machining grid &mdash; type <code>1/16</code> or <code>0.05</code>,
-        or leave blank for any size.</p>
+      <p class="hint">Untick a row to hold a dimension at its current value. <strong>Step</strong>
+        is the machining grid. Accepts <code>1/16</code> or <code>0.05</code>, or
+        leave blank for any size.</p>
       <div class="table-scroll">
         <table class="vars">
           <thead><tr><th></th><th>Dimension</th><th class="n">Min</th><th class="n">Max</th><th class="n">Step</th></tr></thead>
@@ -147,7 +147,7 @@
         <span class="hint" style="margin:0;font-size:11px">1&sigma;</span>
       </div>
       <p class="hint">How much the real thing differs from the drawing. Used by the
-        robustness check in <strong>Compare &amp; Safety</strong> &mdash; never by the
+        robustness check in <strong>Compare &amp; Safety</strong>, never by the
         optimizer, which always works from nominal.</p>
       <div class="rows" id="toleranceRows"></div>
     </section>
@@ -169,10 +169,9 @@
 
     <section class="card" id="reportCard" hidden>
       <h2>Design sheets</h2>
-      <p class="hint">Every run writes its own report as soon as it finishes &mdash;
-        the whole curve, which limit binds, and why. This is the other document:
-        one sheet per design, with the numbers you would machine to, zipped so you
-        can send the set.</p>
+      <p class="hint">Every run writes its own report as soon as it finishes, covering
+        the whole curve and which limit binds. This is the other document: one sheet per
+        design, giving the dimensions to machine to, packaged as a zip archive.</p>
       <div class="design-actions">
         <button type="button" class="chip" id="btnReportOpen">Open this run&rsquo;s report</button>
         <button type="button" class="chip" id="btnBundle">Download every design (.zip)</button>
@@ -204,9 +203,9 @@
       <p class="hint" id="budgetSplit"></p>
       <label class="check">
         <input type="checkbox" id="modePareto">
-        <span>Map the full trade-off <em>(trains a model on sampled simulations,
-          then searches the model &mdash; usually faster, and gives you a curve
-          of options instead of one answer)</em></span>
+        <span>Map the full trade-off <em>(trains a model on sampled simulations, then
+          searches the model. Usually faster, and produces a curve of options rather than
+          a single answer)</em></span>
       </label>
       <p class="estimate" id="estimate"></p>
       <div class="problems" id="problems"></div>
@@ -219,9 +218,9 @@
 
     <div class="empty" id="emptyState">
       <div class="empty-inner">
-        <h3>Ready when you are</h3>
-        <p>Your motor is loaded and drawn below. Choose what may change and what
-          you want more of, then press <strong>Optimize</strong>.</p>
+        <h3>Ready to optimize</h3>
+        <p>The motor is loaded and drawn below. Select which dimensions may change
+          and what to optimize, then press <strong>Optimize</strong>.</p>
         <div id="emptyPreview" class="empty-preview"></div>
       </div>
     </div>
