@@ -6,6 +6,8 @@ to build the environment first, then starts itself inside it -- so this is the
 only command anybody needs.
 """
 import os
+import socket
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -62,17 +64,80 @@ def relaunch_in_environment() -> None:
         raise SystemExit(0)
 
 
+def open_browser(url: str) -> None:
+    """Opens the app, quietly falling back to whatever the platform offers.
+
+    webbrowser.open returns False rather than raising when it cannot find a
+    browser, and on Windows it can fail outright from a process started by
+    another process. Either way the server is running and the address is on
+    screen, so a failure here is worth nothing more than silence.
+    """
+    try:
+        if webbrowser.open(url):
+            return
+    except Exception:
+        pass
+    try:
+        if os.name == "nt":
+            os.startfile(url)                                    # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", url], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def port_is_free(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
 def main() -> None:
     import uvicorn
 
     url = "http://{}:{}".format(HOST, PORT)
+
+    # Checked before starting, because uvicorn's failure to bind is a traceback
+    # about an address, which reads as the app being broken rather than as
+    # another copy of it already running.
+    if not port_is_free(HOST, PORT):
+        raise SystemExit(
+            "\n  Something is already using port {}.\n"
+            "  It is probably this app, already running -- open {} and see.\n"
+            "  If not, close whatever is using the port and try again.\n".format(
+                PORT, url))
+
     if "--no-browser" not in sys.argv:
-        threading.Timer(1.2, lambda: webbrowser.open(url)).start()
-    print("\n  Lior's Really Good™ Rocket Optimizer  ->  {}\n".format(url))
+        threading.Timer(1.2, open_browser, args=(url,)).start()
+
+    print("\n  Lior's Really Good™ Rocket Optimizer is running.\n"
+          "\n"
+          "      {}\n"
+          "\n"
+          "  Your browser should open there by itself. If it does not, copy that\n"
+          "  address into it -- the app is running either way.\n"
+          "\n"
+          "  Leave this window open while you use it. Ctrl-C here stops the app.\n"
+          .format(url))
+    # Flushed so the address is on screen before uvicorn starts: stdout is
+    # block-buffered when the output is piped or captured, and a library
+    # warning on unbuffered stderr would otherwise print above it.
+    sys.stdout.flush()
     uvicorn.run("app.server:app", host=HOST, port=PORT, log_level="warning")
 
 
 if __name__ == "__main__":
     if not ready():
         relaunch_in_environment()
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n  Stopped.\n")
