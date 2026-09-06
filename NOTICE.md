@@ -3,8 +3,7 @@
 ## openMotor
 
 The internal ballistics engine is [openMotor](https://github.com/reilleya/openMotor)
-by Andrew Reilley, licensed GPLv3. It is not redistributed with this project. Setup
-clones it locally, pinned to a single commit.
+by Andrew Reilley, licensed GPLv3. 
 
 On a machine without a C compiler (skill issue), setup adds one file to that local clone:
 `mathlib/_find_perimeter_cy.py`, a pure-Python stand-in for openMotor's compiled
