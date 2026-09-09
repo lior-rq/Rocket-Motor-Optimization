@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -588,6 +588,12 @@ def design_curves(payload: CurvePayload) -> JSONResponse:
     x = np.asarray(payload.x, dtype=float)
     design = describe_design(space, x, spec, "Selected", with_curves=True)
     return JSONResponse(jsonable(design))
+
+
+@app.get("/legacy")
+def legacy_view() -> FileResponse:
+    """The single-page interface the wizard replaced."""
+    return FileResponse(STATIC / "legacy.html")
 
 
 app.mount("/", StaticFiles(directory=str(STATIC), html=True), name="static")

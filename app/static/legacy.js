@@ -14,8 +14,7 @@ const App = (() => {
     spec: null, motor: null, metrics: {}, orderingModes: {}, effortLevels: {},
     unit: 'in', jobId: null, poll: null, results: null, runs: [],
     tolerances: null, toleranceFields: {}, robustness: null,
-    profile: 'design', selected: 0, baselineCurves: null, reportJob: null,
-    step: 0, validation: { problems: [] }
+    profile: 'design', selected: 0, baselineCurves: null, reportJob: null
   };
 
   /* ------------------------------------------------------------- numbers */
@@ -75,17 +74,13 @@ const App = (() => {
 
   async function boot() {
     wireChrome();
-    wireWizard();
     await loadDefaults();
     // A finished run can be reopened by its id, which makes a result something
     // a bookmarkable address for a run in progress on this machine.
     const params = new URLSearchParams(location.search);
     if (params.get('profile')) state.profile = params.get('profile');
     const job = params.get('job');
-    const step = params.get('step');
     if (job) await attachToRun(job);
-    if (step !== null) goTo(Number(step));
-    else if (!job) goTo(0);
   }
 
   async function loadDefaults(payload) {
@@ -546,133 +541,6 @@ const App = (() => {
        is worth a little more when the machine is otherwise idle.`;
   }
 
-
-  /* ------------------------------------------------------------- wizard */
-
-  const STEPS = 8;
-  const RUNNING = 6, RESULTS = 7;
-
-  // What has to be true before a step will let you past it.
-  function stepDone(i) {
-    const spec = state.spec;
-    if (!spec) return false;
-    switch (i) {
-      case 0: return !!state.motor;
-      case 1: return spec.variables.some(v => v.free);
-      case 2: return (state.validation.problems || []).length === 0;
-      case 3: return spec.objectives.some(o => o.enabled);
-      case 4: return true;
-      case 5: return (state.validation.problems || []).length === 0;
-      case 6: return !!state.results;
-      default: return true;
-    }
-  }
-
-  function furthestAllowed() {
-    let i = 0;
-    while (i < STEPS - 1 && stepDone(i)) i++;
-    return i;
-  }
-
-  function goTo(i) {
-    state.step = Math.max(0, Math.min(i, STEPS - 1));
-    document.querySelectorAll('.step').forEach(el => {
-      el.hidden = Number(el.dataset.step) !== state.step;
-    });
-    renderStepper();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (state.step === 0) renderMotorPreview();
-    if (state.step === 2) renderBaselineCheck();
-  }
-
-  function renderStepper() {
-    const reach = furthestAllowed();
-    document.querySelectorAll('.step-tab').forEach(tab => {
-      const i = Number(tab.dataset.step);
-      tab.classList.toggle('active', i === state.step);
-      tab.classList.toggle('done', i < state.step && stepDone(i));
-      tab.disabled = i > reach;
-    });
-    const back = $('#btnBack'), next = $('#btnNext'), gate = $('#stepGate');
-    back.disabled = state.step === 0;
-    const last = state.step === STEPS - 1;
-    next.hidden = last;
-    next.textContent = state.step === 5 ? 'Optimize' : 'Next';
-    next.disabled = !stepDone(state.step);
-    gate.textContent = last || stepDone(state.step) ? '' : gateReason(state.step);
-  }
-
-  function gateReason(i) {
-    switch (i) {
-      case 0: return 'Load a .ric file to continue.';
-      case 1: return 'At least one dimension has to be free to change.';
-      case 2:
-      case 5: return (state.validation.problems || [])[0] || 'Resolve the problems above.';
-      case 3: return 'Pick at least one thing to optimize.';
-      case 6: return state.jobId ? 'The search is still running.' : 'Run the search first.';
-      default: return '';
-    }
-  }
-
-  function wireWizard() {
-    $('#btnBack').addEventListener('click', () => goTo(state.step - 1));
-    $('#btnNext').addEventListener('click', () => {
-      if (state.step === 5) { startRun(); return; }
-      goTo(state.step + 1);
-    });
-    document.querySelectorAll('.step-tab').forEach(tab =>
-      tab.addEventListener('click', () => goTo(Number(tab.dataset.step))));
-  }
-
-  function renderMotorPreview() {
-    if (!state.motor) return;
-    const b = Object.assign({}, state.motor, { curves: state.baselineCurves });
-    $('#motorPreview').innerHTML = Charts.crossSectionSVG(b, b);
-    const c = state.baselineCurves;
-    if (c && c.time) {
-      Charts.draw($('#motorThrust'), [{
-        x: c.time, y: c.thrust, mode: 'lines', name: 'thrust',
-        line: { width: 2.2 }
-      }], {
-        showlegend: false,
-        xaxis: Object.assign(Charts.theme().xaxis, { title: 'Time (s)' }),
-        yaxis: Object.assign(Charts.theme().yaxis,
-                             { title: 'Thrust (N)', rangemode: 'tozero' })
-      });
-    }
-  }
-
-  // The motor summary reports display units under its own key names.
-  const BASELINE_KEYS = {
-    max_pressure: 'max_pressure_psi', peak_mass_flux: 'mass_flux_lb',
-    port_throat: 'port_throat', peak_kn: 'peak_kn', initial_kn: 'initial_kn',
-    initial_thrust: 'initial_thrust', total_impulse: 'total_impulse',
-    isp: 'isp', burn_time: 'burn_time',
-  };
-
-  function renderBaselineCheck() {
-    const host = $('#baselineCheck');
-    const m = state.motor;
-    if (!m || !state.spec) { host.innerHTML = ''; return; }
-    const num = v => v.toLocaleString(undefined, { maximumFractionDigits: 3 });
-    let unknown = 0;
-    const rows = state.spec.constraints.filter(c => c.enabled).map(c => {
-      const key = BASELINE_KEYS[c.metric];
-      const have = key ? m[key] : undefined;
-      if (have === undefined || have === null || Number.isNaN(have)) { unknown++; return ''; }
-      const want = metricToDisplay(c.metric, c.value);
-      const ok = c.op === '<=' ? have <= want : have >= want;
-      return `<div class="check-row ${ok ? 'ok' : 'bad'}">
-        <span class="k">${Charts.metricLabel(c.metric)}</span>
-        <span class="v">${num(have)}</span>
-        <span class="lim">${c.op === '<=' ? '≤' : '≥'} ${num(want)}</span>
-        <span class="tag">${ok ? 'ok' : 'over'}</span></div>`;
-    }).join('');
-    const note = unknown
-      ? `<p class="hint">${unknown} limit${unknown > 1 ? 's are' : ' is'} only measured during a run.</p>` : '';
-    host.innerHTML = (rows || '<p class="hint">No limits are enabled.</p>') + note;
-  }
-
   /* ----------------------------------------------------------- validate */
 
   let validateTimer = null;
@@ -836,7 +704,6 @@ const App = (() => {
     $('#live').hidden = false;
     $('#liveStats').innerHTML = '';
     $('#liveNote').textContent = 'Waiting for the first generation…';
-    goTo(RUNNING);
     state.poll = setInterval(pollJob, 900);
   }
 
@@ -894,12 +761,6 @@ const App = (() => {
       `<div class="live-stat"><span class="k">${k}</span>
        <span class="v ${cls}">${v}</span></div>`).join('');
 
-    // The loaded motor, on the same axes, so progress is always relative to it.
-    if (state.motor && t.metrics) {
-      const at = m => state.motor[BASELINE_KEYS[m] || m];
-      const bx = at(t.metrics[0]), by = at(t.metrics[1]);
-      if (Number.isFinite(bx) && Number.isFinite(by)) t.baseline = [bx, by];
-    }
     try { Charts.liveFrame($('#livePlot'), t); } catch (e) { console.error(e); }
     try { Charts.liveSpark($('#liveSpark'), t.trace); } catch (e) { console.error(e); }
     $('#liveNote').textContent = t.trace && t.trace.length > 1
@@ -1006,7 +867,6 @@ const App = (() => {
       $('#progress').hidden = false;
       $('#btnRun').disabled = true;
       $('#runLabel').textContent = 'Working…';
-        goTo(RUNNING);
       if (job.telemetry) renderLive(job.telemetry);
       state.poll = setInterval(pollJob, 900);
       return;
@@ -1030,8 +890,6 @@ const App = (() => {
     $('#panels').hidden = false;
     renderProfiles();
     renderPanels();
-    renderStepper();
-    if (state.results.designs.length) goTo(RESULTS);
   }
 
   /* -------------------------------------------------------- the results */

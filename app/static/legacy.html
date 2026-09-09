@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lior's Really Good™ Rocket Optimizer</title>
+<title>Lior's Really Good™ Rocket Optimizer — legacy view</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚀</text></svg>">
 <link rel="stylesheet" href="/app.css">
 <script src="/vendor/plotly.min.js"></script>
@@ -32,7 +32,6 @@
       <button type="button" data-unit="in" class="active">inch</button>
       <button type="button" data-unit="mm">mm</button>
     </div>
-    <a class="link legacy-link" href="/legacy" title="The single-page interface">legacy view</a>
     <button type="button" class="ghost" id="btnTheme" title="Light / dark">◐</button>
     <button type="button" class="primary" id="btnRun">
       <span id="runLabel">Optimize</span>
@@ -48,25 +47,17 @@
   </div>
 </div>
 
-<nav class="stepper" id="stepper">
-    <button type="button" class="step-tab" data-step="0"><span class="num">1</span><span class="name">Motor</span></button>
-    <button type="button" class="step-tab" data-step="1"><span class="num">2</span><span class="name">Variables</span></button>
-    <button type="button" class="step-tab" data-step="2"><span class="num">3</span><span class="name">Constraints</span></button>
-    <button type="button" class="step-tab" data-step="3"><span class="num">4</span><span class="name">Optimize</span></button>
-    <button type="button" class="step-tab" data-step="4"><span class="num">5</span><span class="name">Tolerances</span></button>
-    <button type="button" class="step-tab" data-step="5"><span class="num">6</span><span class="name">Settings</span></button>
-    <button type="button" class="step-tab" data-step="6"><span class="num">7</span><span class="name">Running</span></button>
-    <button type="button" class="step-tab" data-step="7"><span class="num">8</span><span class="name">Results</span></button>
-</nav>
+<main class="layout">
 
-<main class="wizard" id="wizard">
-  <section class="step" data-step="0">
-    <header class="step-head"><h1>Motor</h1><p>Load the motor to optimise</p></header>
+  <!-- ------------------------------------------------ configuration rail -->
+  <aside class="rail" id="rail">
+
     <section class="card">
       <h2>Loaded motor</h2>
       <dl class="specs" id="motorSpecs"></dl>
       <div class="warnings" id="motorWarnings"></div>
     </section>
+
     <section class="card">
       <h2>Fixed hardware</h2>
       <p class="hint">Read from the .ric file and never changed, either by the optimizer
@@ -94,14 +85,7 @@
         <span class="hw-flag" id="hwFlag" hidden>modified from file</span>
       </div>
     </section>
-    <section class="card">
-      <h2>How it behaves as loaded</h2>
-      <div id="motorPreview" class="motor-preview"></div>
-      <div id="motorThrust" class="motor-thrust"></div>
-    </section>
-  </section>
-  <section class="step" data-step="1" hidden>
-    <header class="step-head"><h1>Variables</h1><p>Choose what may change, and by how much</p></header>
+
     <section class="card">
       <div class="card-head">
         <h2>What may change</h2>
@@ -128,41 +112,12 @@
         <button type="button" class="chip" data-step="0.0625">1/16″</button>
       </div>
     </section>
-    <section class="card">
-      <h2>Grain cores</h2>
-      <div class="field">
-        <select id="orderingMode"></select>
-      </div>
-      <div class="field" id="orderingStepField" hidden>
-        <label for="orderingStep">Minimum increase per grain</label>
-        <input type="text" id="orderingStep" inputmode="decimal">
-      </div>
-      <div class="field" id="orderingGroupsField" hidden>
-        <label for="orderingGroups">Mandrel sizes</label>
-        <select id="orderingGroups"></select>
-      </div>
-    </section>
+
     <section class="card" id="sizingCard">
       <h2>Possible configurations</h2>
       <div class="sizing" id="sizing"></div>
     </section>
-  </section>
-  <section class="step" data-step="2" hidden>
-    <header class="step-head"><h1>Constraints</h1><p>Set the limits the design must respect</p></header>
-    <section class="card">
-      <div class="card-head">
-        <h2>Limits it must respect</h2>
-        <button type="button" class="link" id="btnAddConstraint">+ add</button>
-      </div>
-      <div class="rows" id="constraintRows"></div>
-    </section>
-    <section class="card">
-      <h2>Where the loaded motor sits</h2>
-      <div id="baselineCheck" class="baseline-check"></div>
-    </section>
-  </section>
-  <section class="step" data-step="3" hidden>
-    <header class="step-head"><h1>Optimize</h1><p>Choose what to push up, down, or toward a target</p></header>
+
     <section class="card">
       <div class="card-head">
         <h2>What to optimize</h2>
@@ -177,9 +132,15 @@
         <button type="button" class="chip" data-preset="tradeoff">Thrust vs impulse</button>
       </div>
     </section>
-  </section>
-  <section class="step" data-step="4" hidden>
-    <header class="step-head"><h1>Tolerances</h1><p>Optional: how much the build varies</p></header>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Limits it must respect</h2>
+        <button type="button" class="link" id="btnAddConstraint">+ add</button>
+      </div>
+      <div class="rows" id="constraintRows"></div>
+    </section>
+
     <section class="card">
       <div class="card-head">
         <h2>Build tolerances</h2>
@@ -190,9 +151,37 @@
         optimizer, which always works from nominal.</p>
       <div class="rows" id="toleranceRows"></div>
     </section>
-  </section>
-  <section class="step" data-step="5" hidden>
-    <header class="step-head"><h1>Settings</h1><p>Search effort, cores, and how long it will take</p></header>
+
+    <section class="card">
+      <h2>Grain cores</h2>
+      <div class="field">
+        <select id="orderingMode"></select>
+      </div>
+      <div class="field" id="orderingStepField" hidden>
+        <label for="orderingStep">Minimum increase per grain</label>
+        <input type="text" id="orderingStep" inputmode="decimal">
+      </div>
+      <div class="field" id="orderingGroupsField" hidden>
+        <label for="orderingGroups">Mandrel sizes</label>
+        <select id="orderingGroups"></select>
+      </div>
+    </section>
+
+    <section class="card" id="reportCard" hidden>
+      <h2>Design sheets</h2>
+      <p class="hint">Every run writes its own report as soon as it finishes, covering
+        the whole curve and which limit binds. This is the other document: one sheet per
+        design, giving the dimensions to machine to, packaged as a zip archive.</p>
+      <div class="design-actions">
+        <button type="button" class="chip" id="btnReportOpen">Open this run&rsquo;s report</button>
+        <button type="button" class="chip" id="btnBundle">Download every design (.zip)</button>
+      </div>
+      <div class="bundle-progress" id="bundleProgress" hidden>
+        <div class="bar"><div class="fill" id="bundleFill"></div></div>
+        <span class="meta" id="bundleMsg"></span>
+      </div>
+    </section>
+
     <section class="card">
       <h2>How hard to look</h2>
       <div class="seg" id="effortSeg" role="group"></div>
@@ -221,63 +210,43 @@
       <p class="estimate" id="estimate"></p>
       <div class="problems" id="problems"></div>
     </section>
-  </section>
-  <section class="step" data-step="6" hidden>
-    <header class="step-head"><h1>Running</h1><p>The search, live</p></header>
-    <section class="card">
-      <div class="live" id="live" hidden>
-        <div class="live-head">
-          <div>
-            <h3 id="liveTitle">Searching</h3>
-            <p class="sub" id="liveSub">Every dot is a motor. Blue ones are legal.</p>
-          </div>
-          <div class="live-stats" id="liveStats"></div>
-        </div>
-        <div class="live-plot" id="livePlot"></div>
-        <div class="live-foot">
-          <div class="live-spark" id="liveSpark"></div>
-          <p class="sub" id="liveNote"></p>
-        </div>
-      </div>
-      <div class="empty" id="emptyState">
-        <div class="empty-inner">
-          <h3>Ready to optimize</h3>
-          <p>Everything is set. Press <strong>Optimize</strong> to start the search.</p>
-          <div id="emptyPreview" class="empty-preview"></div>
-        </div>
-      </div>
-    </section>
-  </section>
-  <section class="step" data-step="7" hidden>
-    <header class="step-head"><h1>Results</h1><p>The designs it found</p></header>
+  </aside>
+
+  <!-- --------------------------------------------------------- workspace -->
+  <section class="workspace">
     <nav class="profiles" id="profiles" role="tablist"></nav>
+
+    <div class="empty" id="emptyState">
+      <div class="empty-inner">
+        <h3>Ready to optimize</h3>
+        <p>The motor is loaded and drawn below. Select which dimensions may change
+          and what to optimize, then press <strong>Optimize</strong>.</p>
+        <div id="emptyPreview" class="empty-preview"></div>
+      </div>
+    </div>
+
+    <div class="live" id="live" hidden>
+      <div class="live-head">
+        <div>
+          <h3 id="liveTitle">Searching</h3>
+          <p class="sub" id="liveSub">Every dot is a motor. Blue ones are legal.</p>
+        </div>
+        <div class="live-stats" id="liveStats"></div>
+      </div>
+      <div class="live-plot" id="livePlot"></div>
+      <div class="live-foot">
+        <div class="live-spark" id="liveSpark"></div>
+        <p class="sub" id="liveNote"></p>
+      </div>
+    </div>
+
     <div class="panels" id="panels" hidden></div>
-    <section class="card" id="reportCard" hidden>
-      <h2>Design sheets</h2>
-      <p class="hint">Every run writes its own report as soon as it finishes, covering
-        the whole curve and which limit binds. This is the other document: one sheet per
-        design, giving the dimensions to machine to, packaged as a zip archive.</p>
-      <div class="design-actions">
-        <button type="button" class="chip" id="btnReportOpen">Open this run&rsquo;s report</button>
-        <button type="button" class="chip" id="btnBundle">Download every design (.zip)</button>
-      </div>
-      <div class="bundle-progress" id="bundleProgress" hidden>
-        <div class="bar"><div class="fill" id="bundleFill"></div></div>
-        <span class="meta" id="bundleMsg"></span>
-      </div>
-    </section>
   </section>
 </main>
-
-<footer class="wizard-foot">
-  <button type="button" class="ghost" id="btnBack">Back</button>
-  <p class="step-gate" id="stepGate"></p>
-  <button type="button" class="primary" id="btnNext">Next</button>
-</footer>
 
 <div class="toast" id="toast" hidden></div>
 
 <script src="/charts.js"></script>
-<script src="/app.js"></script>
+<script src="/legacy.js"></script>
 </body>
 </html>
