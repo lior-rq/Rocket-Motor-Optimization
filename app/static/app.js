@@ -15,7 +15,7 @@ const App = (() => {
     unit: 'in', jobId: null, poll: null, results: null, runs: [],
     tolerances: null, toleranceFields: {}, robustness: null,
     profile: 'design', selected: 0, baselineCurves: null, reportJob: null,
-    step: 0, validation: { problems: [] }
+    step: 0, reached: 0, validation: { problems: [] }
   };
 
   /* ------------------------------------------------------------- numbers */
@@ -393,6 +393,7 @@ const App = (() => {
         state.spec.constraints.splice(Number(b.dataset.del), 1);
         renderConstraints(); validate();
       }));
+    renderBaselineCheck();
   }
 
   function renderTolerances() {
@@ -552,15 +553,25 @@ const App = (() => {
   const STEPS = 8;
   const RUNNING = 6, RESULTS = 7;
 
+  // Which step can fix each kind of problem, so a fault never blocks a step
+  // that cannot resolve it.
+  const AREA_STEP = { variables: 1, constraints: 2, objectives: 3, settings: 5 };
+
+  function problemsFor(i) {
+    const areas = state.validation.problem_areas || [];
+    return (state.validation.problems || [])
+      .filter((_, n) => (AREA_STEP[areas[n]] !== undefined ? AREA_STEP[areas[n]] : 5) === i);
+  }
+
   // What has to be true before a step will let you past it.
   function stepDone(i) {
     const spec = state.spec;
     if (!spec) return false;
     switch (i) {
       case 0: return !!state.motor;
-      case 1: return spec.variables.some(v => v.free);
-      case 2: return (state.validation.problems || []).length === 0;
-      case 3: return spec.objectives.some(o => o.enabled);
+      case 1: return spec.variables.some(v => v.free) && !problemsFor(1).length;
+      case 2: return !problemsFor(2).length;
+      case 3: return spec.objectives.some(o => o.enabled) && !problemsFor(3).length;
       case 4: return true;
       case 5: return (state.validation.problems || []).length === 0;
       case 6: return !!state.results;
@@ -571,18 +582,18 @@ const App = (() => {
   function furthestAllowed() {
     let i = 0;
     while (i < STEPS - 1 && stepDone(i)) i++;
-    return i;
+    return Math.max(i, state.reached);   // never trap the user behind a step
   }
 
   function goTo(i) {
     state.step = Math.max(0, Math.min(i, STEPS - 1));
+    state.reached = Math.max(state.reached, state.step);
     document.querySelectorAll('.step').forEach(el => {
       el.hidden = Number(el.dataset.wstep) !== state.step;
     });
     renderStepper();
     window.scrollTo({ top: 0, behavior: 'smooth' });
     if (state.step === 0) renderMotorPreview();
-    if (state.step === 2) renderBaselineCheck();
   }
 
   function renderStepper() {
@@ -617,10 +628,10 @@ const App = (() => {
   function gateReason(i) {
     switch (i) {
       case 0: return 'Load a .ric file to continue.';
-      case 1: return 'At least one dimension has to be free to change.';
-      case 2:
+      case 1: return problemsFor(1)[0] || 'At least one dimension has to be free to change.';
+      case 2: return problemsFor(2)[0] || 'Resolve the problems above.';
+      case 3: return problemsFor(3)[0] || 'Pick at least one thing to optimize.';
       case 5: return (state.validation.problems || [])[0] || 'Resolve the problems above.';
-      case 3: return 'Pick at least one thing to optimize.';
       case 6: return state.jobId ? 'The search is still running.' : 'Run the search first.';
       default: return '';
     }

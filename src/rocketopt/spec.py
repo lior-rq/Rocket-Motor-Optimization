@@ -214,34 +214,45 @@ class RunSpec:
                 "per_seed": pop * gen, "total": pop * gen * seeds,
                 "samples": preset["samples"], "label": preset["label"]}
 
-    def validate(self) -> List[str]:
-        """Human-readable problems, empty when the spec is runnable."""
-        problems: List[str] = []
+    def problems(self) -> List[Tuple[str, str]]:
+        """(area, message) for everything wrong, so the interface can send the
+        user to the page that fixes it rather than blocking an unrelated one."""
+        found: List[Tuple[str, str]] = []
         if not self.enabled_objectives:
-            problems.append("Pick at least one thing to optimise.")
+            found.append(("objectives", "Pick at least one thing to optimise."))
         if not any(v.free for v in self.variables):
-            problems.append("At least one dimension has to be free to change.")
+            found.append(("variables",
+                          "At least one dimension has to be free to change."))
         for spec in self.objectives:
             if spec.enabled and spec.metric not in OPTIMISABLE_METRICS:
-                problems.append("Unknown objective {!r}.".format(spec.metric))
+                found.append(("objectives",
+                              "Unknown objective {!r}.".format(spec.metric)))
             if spec.enabled and spec.direction == "target" and spec.target is None:
-                problems.append("{} needs a target value.".format(spec.metric))
+                found.append(("objectives",
+                              "{} needs a target value.".format(spec.metric)))
         for spec in self.constraints:
             if spec.enabled and spec.metric not in OPTIMISABLE_METRICS:
-                problems.append("Unknown constraint {!r}.".format(spec.metric))
+                found.append(("constraints",
+                              "Unknown constraint {!r}.".format(spec.metric)))
         for var in self.variables:
             if not var.free:
                 continue
             if var.high <= var.low:
-                problems.append("{}: upper bound must exceed the lower bound.".format(
-                    var.label or var.name))
+                found.append(("variables",
+                              "{}: upper bound must exceed the lower bound.".format(
+                                  var.label or var.name)))
             elif var.step > 0 and var.step > (var.high - var.low):
-                problems.append(
-                    "{}: a step of {:.4g} is coarser than its whole range.".format(
-                        var.label or var.name, var.step))
+                found.append(("variables",
+                              "{}: a step of {:.4g} is coarser than its whole range."
+                              .format(var.label or var.name, var.step)))
         if self.mode == "pareto" and len(self.enabled_objectives) < 2:
-            problems.append("A trade-off map needs at least two objectives.")
-        return problems
+            found.append(("settings",
+                          "A trade-off map needs at least two objectives."))
+        return found
+
+    def validate(self) -> List[str]:
+        """Human-readable problems, empty when the spec is runnable."""
+        return [message for _, message in self.problems()]
 
     def to_dict(self) -> Dict:
         return {

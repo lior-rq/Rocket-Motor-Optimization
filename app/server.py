@@ -208,7 +208,7 @@ def validate(payload: SpecPayload) -> JSONResponse:
     """Problems with a configuration, before anyone waits on a run."""
     spec = RunSpec.from_dict(payload.spec)
     motor = _require_motor()
-    problems = spec.validate()
+    found = spec.problems()
     notes = []
     try:
         space = build_space(spec, motor)
@@ -224,7 +224,7 @@ def validate(payload: SpecPayload) -> JSONResponse:
                     .format(i + 1, actual / 0.0254, landed / 0.0254))
                 break
     except Exception as exc:
-        problems.append(str(exc))
+        found.append(("variables", str(exc)))
     estimate = _estimate(spec)
     sizing = size_space(spec, len(motor["grains"]),
                         evaluated=estimate["simulations"])
@@ -234,14 +234,14 @@ def validate(payload: SpecPayload) -> JSONResponse:
         sizing["reduction"] = None      # never let an extra insight break validate
     # Zero means the rules contradict the bounds; say so before the run.
     if sizing.get("total") == 0:
-        problems.append(
+        found.append(("variables",
             "These rules leave no possible motor. The minimum increase between "
             "cores needs {} in of range across {} grains, but the core bounds "
             "only span {:.2f} in.".format(
                 round((spec.ordering.min_step or 0) / 0.0254, 3) if spec.ordering.min_step else 0,
                 len(motor["grains"]),
                 max((v.high - v.low) / 0.0254 for v in spec.variables
-                    if v.name.startswith("core"))))
+                    if v.name.startswith("core")))))
     # JavaScript loses integer precision past 2^53, so counts travel as text.
     if sizing.get("total") is not None:
         sizing["total_exact"] = str(sizing["total"])
@@ -251,7 +251,9 @@ def validate(payload: SpecPayload) -> JSONResponse:
         if block.get("count") is not None:
             block["count_exact"] = str(block["count"])
             block["count"] = float(block["count"])
-    return JSONResponse({"problems": problems, "notes": notes,
+    return JSONResponse({"problems": [m for _, m in found],
+                         "problem_areas": [a for a, _ in found],
+                         "notes": notes,
                          "estimate": estimate, "sizing": sizing})
 
 
