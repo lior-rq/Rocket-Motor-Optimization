@@ -54,6 +54,10 @@ class Job:
     #: stays a fixed size.
     telemetry: Optional[Dict] = None
     trace: List[Dict] = field(default_factory=list)
+    #: Simulations counted at the last snapshot, for the live speed reading.
+    _last_count: int = 0
+    _last_time: float = 0.0
+    rate: float = 0.0
     #: What the estimate promised, so the registry can learn its own error.
     predicted: float = 0.0
     shape: str = ""
@@ -191,7 +195,23 @@ class JobRegistry:
             while len(self._order) > self.keep:
                 self._jobs.pop(self._order.pop(0), None)
 
+        budget = spec.budget
+
         def telemetry(snapshot: Dict) -> None:
+            # A generation is one population, so the count follows the grid the
+            # budget already fixes rather than needing the optimiser to report.
+            done = ((snapshot["seed_index"] * budget["gen"]
+                     + snapshot["generation"]) * budget["pop"])
+            now = time.time()
+            if job._last_time and now > job._last_time and done > job._last_count:
+                sample = (done - job._last_count) / (now - job._last_time)
+                # Smoothed: one slow generation should not swing the reading.
+                job.rate = sample if not job.rate else 0.7 * job.rate + 0.3 * sample
+            job._last_count, job._last_time = done, now
+            snapshot["simulations_done"] = done
+            snapshot["simulations_total"] = budget["total"]
+            snapshot["rate"] = round(job.rate, 2)
+            snapshot["workers"] = workers or 0
             history = job.trace
             best = snapshot.get("best")
             if best is not None:

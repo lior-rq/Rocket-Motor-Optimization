@@ -6,6 +6,8 @@ All the work lives in ``rocketopt.runner``; this translates it to and from JSON.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -352,6 +354,9 @@ def _rate_at(timestep: float) -> float:
     into the per-shape correction gave two loops chasing one error, which
     oscillated instead of converging.
     """
+    measured = THROUGHPUT.get("verify_rate")
+    if measured and abs(timestep - 0.002) < 1e-9:
+        return max(measured, 1.0)
     return max(THROUGHPUT["rate"] * (max(timestep, 0.002) / 0.01) ** 0.75, 1.0)
 
 
@@ -359,18 +364,38 @@ def _sim_rate(spec: RunSpec) -> float:
     return _rate_at(spec.search_timestep)
 
 
-def machine_summary() -> Dict:
-    """What this computer can do, measured rather than assumed.
+def performance_cores() -> Optional[int]:
+    """Fast cores only, where the platform will say.
 
-    The default leaves two cores free; measured scaling flattens before the
-    last core anyway.
+    Measured scaling on a 10P+4E machine reverses past the performance cores:
+    14 workers is slower than 12, because the slowest worker sets the pace.
     """
+    if sys.platform == "darwin":
+        try:
+            out = subprocess.run(["sysctl", "-n", "hw.perflevel0.logicalcpu"],
+                                 capture_output=True, text=True, timeout=2)
+            count = int(out.stdout.strip())
+            return count if count > 0 else None
+        except Exception:
+            return None       # Intel Macs have no perflevel0; nothing to report
+    return None
+
+
+def machine_summary() -> Dict:
+    """What this computer can do, measured rather than assumed."""
     cores = os.cpu_count() or 2
+    fast = performance_cores()
+    # Every fast core, or two short of the total where fast ones are not
+    # distinguishable, so the machine stays usable.
+    default = fast if fast else max(1, cores - 2)
     return {
         "cores": cores,
-        "default_workers": max(1, cores - 2),
+        "performance_cores": fast,
+        "default_workers": max(1, min(default, cores)),
         "rate": round(THROUGHPUT["rate"], 1),
         "rate_source": THROUGHPUT["source"],
+        "platform": "mac" if sys.platform == "darwin"
+                    else ("windows" if os.name == "nt" else "linux"),
     }
 
 
@@ -406,7 +431,14 @@ def _estimate(spec: RunSpec) -> Dict:
                + verified / _rate_at(spec.verify_timestep)
                + predicted / SURROGATE_RATE + overhead)
     seconds *= jobs.factor(_shape(spec))
+    diag = STATE.get("diagnostic")
+    if diag:
+        seconds *= diag["thermal_derate"]
     return {"simulations": int(real + predicted), "seconds": int(seconds),
+            # Without a diagnostic the rate is a guess, so the page says
+            # nothing about time rather than quoting a number it invented.
+            "measured": bool(diag),
+            "preset_seconds": budget.get("preset_seconds"),
             "seeds": budget["seeds"], "pop": budget["pop"], "gen": budget["gen"],
             "per_seed": budget["per_seed"],
             "openmotor_runs": int(real), "model_runs": int(predicted),
@@ -417,6 +449,62 @@ def _estimate(spec: RunSpec) -> Dict:
             "calibrated": jobs.has_seen(_shape(spec))}
 
 
+#: A sustained run heats the machine and the clocks come down. Measured on a
+#: short burst, so the honest estimate is longer than the burst implies.
+THERMAL_DERATE = 1.20
+
+
+@app.post("/api/diagnostic")
+def diagnostic(payload: SpecPayload) -> JSONResponse:
+    """Times real simulations at the settings about to be used.
+
+    The startup calibration guesses at a default configuration. This measures
+    the space, timestep and worker count the user actually chose, which is the
+    only way to quote a time worth trusting.
+    """
+    motor = _require_motor()
+    spec = RunSpec.from_dict(payload.spec)
+    from rocketopt.sampling import evaluate_batch, mixed_designs
+
+    space = build_space(spec, motor)
+    workers = spec.workers or machine_summary()["default_workers"]
+
+    def timed(n: int, timestep: float) -> float:
+        X = mixed_designs(space, n, seed=n)
+        started = time.time()
+        evaluate_batch(space, X, timestep=timestep, workers=workers)
+        return time.time() - started
+
+    # Two sizes and the slope between them: each call builds its own process
+    # pool, which on macOS can cost more than the simulations it then runs.
+    small, large = 48, 240
+    t_small = timed(small, spec.search_timestep)
+    t_large = timed(large, spec.search_timestep)
+    slope = (t_large - t_small) / float(large - small)
+    if slope <= 0:
+        raise HTTPException(503, "The diagnostic could not get a clean reading. "
+                                 "Try again with the machine otherwise idle.")
+    rate = 1.0 / slope
+    THROUGHPUT.update(rate=min(max(rate, 2.0), 400.0), source="diagnostic")
+
+    t_v_small = timed(small, spec.verify_timestep)
+    t_v_large = timed(large, spec.verify_timestep)
+    v_slope = (t_v_large - t_v_small) / float(large - small)
+    if v_slope > 0:
+        THROUGHPUT["verify_rate"] = 1.0 / v_slope
+
+    STATE["diagnostic"] = {
+        "rate": round(rate, 1),
+        "verify_rate": round(THROUGHPUT.get("verify_rate") or 0.0, 1),
+        "workers": workers,
+        "seconds_spent": round(t_small + t_large + t_v_small + t_v_large, 1),
+        "thermal_derate": THERMAL_DERATE,
+        "at": time.time(),
+    }
+    return JSONResponse({"diagnostic": STATE["diagnostic"],
+                         "estimate": _estimate(spec)})
+
+
 @app.post("/api/run")
 def start_run(payload: SpecPayload) -> JSONResponse:
     motor = _require_motor()
@@ -424,7 +512,8 @@ def start_run(payload: SpecPayload) -> JSONResponse:
     problems = spec.validate()
     if problems:
         raise HTTPException(400, "; ".join(problems))
-    job = jobs.start(spec, motor, workers=spec.workers,
+    job = jobs.start(spec, motor,
+                     workers=spec.workers or machine_summary()["default_workers"],
                      predicted=_estimate(spec)["seconds"],
                      shape=_shape(spec), reports_dir=ROOT / "reports",
                      outputs_dir=ROOT / "outputs")

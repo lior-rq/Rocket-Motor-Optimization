@@ -53,10 +53,9 @@
     <button type="button" class="step-tab" data-wstep="1"><span class="num">2</span><span class="name">Variables</span></button>
     <button type="button" class="step-tab" data-wstep="2"><span class="num">3</span><span class="name">Constraints</span></button>
     <button type="button" class="step-tab" data-wstep="3"><span class="num">4</span><span class="name">Optimize</span></button>
-    <button type="button" class="step-tab" data-wstep="4"><span class="num">5</span><span class="name">Tolerances</span></button>
-    <button type="button" class="step-tab" data-wstep="5"><span class="num">6</span><span class="name">Settings</span></button>
-    <button type="button" class="step-tab" data-wstep="6"><span class="num">7</span><span class="name">Running</span></button>
-    <button type="button" class="step-tab" data-wstep="7"><span class="num">8</span><span class="name">Results</span></button>
+    <button type="button" class="step-tab" data-wstep="4"><span class="num">5</span><span class="name">Settings</span></button>
+    <button type="button" class="step-tab" data-wstep="5"><span class="num">6</span><span class="name">Running</span></button>
+    <button type="button" class="step-tab" data-wstep="6"><span class="num">7</span><span class="name">Results</span></button>
 </nav>
 
 <main class="wizard" id="wizard">
@@ -97,9 +96,10 @@
     <section class="card">
       <h2>How it behaves as loaded</h2>
       <div id="motorPreview" class="motor-preview"></div>
-      <div id="motorThrust" class="motor-thrust"></div>
+      <div id="motorThrust" class="motor-thrust tall"></div>
     </section>
   </section>
+
   <section class="step" data-wstep="1" hidden>
     <header class="step-head"><h1>Variables</h1><p>Choose what may change, and by how much</p></header>
     <section class="card">
@@ -122,10 +122,10 @@
       <div class="quick-steps">
         <span class="label">Set every step to</span>
         <button type="button" class="chip" data-step="0">any</button>
-        <button type="button" class="chip" data-step="0.01">0.01″</button>
-        <button type="button" class="chip" data-step="0.05">0.05″</button>
-        <button type="button" class="chip" data-step="0.1">0.1″</button>
-        <button type="button" class="chip" data-step="0.0625">1/16″</button>
+        <button type="button" class="chip" data-step="0.01">0.01&Prime;</button>
+        <button type="button" class="chip" data-step="0.05">0.05&Prime;</button>
+        <button type="button" class="chip" data-step="0.1">0.1&Prime;</button>
+        <button type="button" class="chip" data-step="0.0625">1/16&Prime;</button>
       </div>
     </section>
     <section class="card">
@@ -142,27 +142,32 @@
         <select id="orderingGroups"></select>
       </div>
     </section>
+  </section>
+
+  <section class="step" data-wstep="2" hidden>
+    <header class="step-head"><h1>Constraints</h1><p>Set the limits the design must respect</p></header>
+    <section class="card">
+      <div class="card-head">
+        <h2>Design Constraints</h2>
+        <button type="button" class="link" id="btnAddConstraint">+ add</button>
+      </div>
+      <div class="rows" id="constraintRows"></div>
+      <div class="dupes" id="constraintDupes"></div>
+    </section>
+    <section class="card">
+      <h2 id="baselineTitle" class="plain">Loaded motor</h2>
+      <div id="baselineCheck" class="baseline-check"></div>
+      <div id="constraintCurves" class="motor-thrust tall"></div>
+      <p class="hint" id="constraintCurvesNote"></p>
+    </section>
     <section class="card" id="sizingCard">
       <h2>Possible configurations</h2>
       <div class="sizing" id="sizing"></div>
     </section>
   </section>
-  <section class="step" data-wstep="2" hidden>
-    <header class="step-head"><h1>Constraints</h1><p>Set the limits the design must respect</p></header>
-    <section class="card">
-      <div class="card-head">
-        <h2>Limits it must respect</h2>
-        <button type="button" class="link" id="btnAddConstraint">+ add</button>
-      </div>
-      <div class="rows" id="constraintRows"></div>
-    </section>
-    <section class="card">
-      <h2>Where the loaded motor sits</h2>
-      <div id="baselineCheck" class="baseline-check"></div>
-    </section>
-  </section>
+
   <section class="step" data-wstep="3" hidden>
-    <header class="step-head"><h1>Optimize</h1><p>Choose what to push up, down, or toward a target</p></header>
+    <header class="step-head"><h1>Optimize</h1><p>Choose what to maximize, minimize, or target</p></header>
     <section class="card">
       <div class="card-head">
         <h2>What to optimize</h2>
@@ -171,58 +176,78 @@
       <div class="rows" id="objectiveRows"></div>
       <div class="presets">
         <span class="label">Presets</span>
+        <button type="button" class="chip" data-preset="tradeoff">Thrust vs impulse</button>
         <button type="button" class="chip" data-preset="thrust">Max initial thrust</button>
         <button type="button" class="chip" data-preset="impulse">Max impulse</button>
         <button type="button" class="chip" data-preset="flat">Flattest curve</button>
-        <button type="button" class="chip" data-preset="tradeoff">Thrust vs impulse</button>
       </div>
     </section>
   </section>
+
   <section class="step" data-wstep="4" hidden>
-    <header class="step-head"><h1>Tolerances</h1><p>Optional: how much the build varies</p></header>
-    <section class="card">
-      <div class="card-head">
-        <h2>Build tolerances</h2>
-        <span class="hint" style="margin:0;font-size:11px">1&sigma;</span>
-      </div>
-      <p class="hint">How much the real thing differs from the drawing. Used by the
-        robustness check in <strong>Compare &amp; Safety</strong>, never by the
-        optimizer, which always works from nominal.</p>
-      <div class="rows" id="toleranceRows"></div>
-    </section>
-  </section>
-  <section class="step" data-wstep="5" hidden>
-    <header class="step-head"><h1>Settings</h1><p>Search effort, cores, and how long it will take</p></header>
+    <header class="step-head"><h1>Settings</h1><p>How hard to search, and how long it will take</p></header>
     <section class="card">
       <h2>How hard to look</h2>
-      <div class="seg" id="effortSeg" role="group"></div>
+      <div class="effort-grid" id="effortSeg"></div>
       <div class="budget">
         <div class="field">
           <label for="budgetSims">Simulation budget</label>
           <input type="text" id="budgetSims" inputmode="numeric">
+          <span class="readout" id="budgetRead"></span>
         </div>
         <div class="field">
           <label for="seedCount">Independent searches</label>
           <select id="seedCount"></select>
+          <span class="readout" id="seedRead"></span>
         </div>
         <div class="field">
           <label for="workerCount">Cores to use</label>
           <select id="workerCount"></select>
+          <span class="readout" id="workerRead"></span>
         </div>
       </div>
+      <label class="check">
+        <input type="checkbox" id="expertMode">
+        <span>I know what I&rsquo;m doing <em>(unlocks the simulation budget, the
+          number of searches and the core count)</em></span>
+      </label>
       <p class="hint" id="machineNote"></p>
       <p class="hint" id="budgetSplit"></p>
+    </section>
+
+    <section class="card">
+      <h2>Search method</h2>
       <label class="check">
         <input type="checkbox" id="modePareto">
-        <span>Map the full trade-off <em>(trains a model on sampled simulations, then
-          searches the model. Usually faster, and produces a curve of options rather than
-          a single answer)</em></span>
+        <span>Surrogate search <span class="beta">beta</span>
+          <em>(samples the space, trains a model on those simulations, then searches
+          the model instead of openMotor. Cheaper and faster than the full search, and
+          it maps the whole trade-off curve, but the answers come from a model and are
+          not guaranteed to be the best available. The full search runs every candidate
+          through openMotor.)</em></span>
       </label>
+    </section>
+
+    <section class="card">
+      <h2>Before you start</h2>
+      <p class="hint">The search uses every core it is given for as long as it runs.
+        A machine that throttles or sleeps part way through takes far longer.</p>
+      <ul class="checklist" id="readyList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>How long it will take</h2>
+      <p class="hint" id="diagNote"></p>
+      <div class="design-actions">
+        <button type="button" class="chip" id="btnDiagnostic">Run the diagnostic</button>
+        <span class="meta" id="diagStatus"></span>
+      </div>
       <p class="estimate" id="estimate"></p>
       <div class="problems" id="problems"></div>
     </section>
   </section>
-  <section class="step" data-wstep="6" hidden>
+
+  <section class="step" data-wstep="5" hidden>
     <header class="step-head"><h1>Running</h1><p>The search, live</p></header>
     <section class="card">
       <div class="live" id="live" hidden>
@@ -233,7 +258,30 @@
           </div>
           <div class="live-stats" id="liveStats"></div>
         </div>
+        <div class="speed" id="speed">
+          <div class="speed-row">
+            <span class="k">Speed</span>
+            <div class="bar"><div class="fill" id="speedFill"></div></div>
+            <span class="v" id="speedNum">&mdash;</span>
+          </div>
+          <div class="speed-row">
+            <span class="k">Remaining</span>
+            <span class="eta" id="speedEta">&mdash;</span>
+          </div>
+        </div>
         <div class="live-plot" id="livePlot"></div>
+        <div class="axis-controls" id="axisControls">
+          <span class="label">Axes</span>
+          <label id="axXlabel">x</label>
+          <input type="text" id="axXmin" inputmode="decimal" size="8">
+          <span class="to">to</span>
+          <input type="text" id="axXmax" inputmode="decimal" size="8">
+          <label id="axYlabel">y</label>
+          <input type="text" id="axYmin" inputmode="decimal" size="8">
+          <span class="to">to</span>
+          <input type="text" id="axYmax" inputmode="decimal" size="8">
+          <button type="button" class="chip" id="btnRefit">Fit to data</button>
+        </div>
         <div class="live-foot">
           <div class="live-spark" id="liveSpark"></div>
           <p class="sub" id="liveNote"></p>
@@ -248,7 +296,8 @@
       </div>
     </section>
   </section>
-  <section class="step" data-wstep="7" hidden>
+
+  <section class="step" data-wstep="6" hidden>
     <header class="step-head"><h1>Results</h1><p>The designs it found</p></header>
     <nav class="profiles" id="profiles" role="tablist"></nav>
     <div class="panels" id="panels" hidden></div>
@@ -265,6 +314,16 @@
         <div class="bar"><div class="fill" id="bundleFill"></div></div>
         <span class="meta" id="bundleMsg"></span>
       </div>
+    </section>
+    <section class="card" id="toleranceCard">
+      <div class="card-head">
+        <h2>Build tolerances</h2>
+        <span class="hint sigma">1&sigma;</span>
+      </div>
+      <p class="hint">How much the real thing differs from the drawing. Used by the
+        robustness check in <strong>Compare &amp; Safety</strong>, never by the
+        optimizer, which always works from nominal.</p>
+      <div class="rows" id="toleranceRows"></div>
     </section>
   </section>
 </main>

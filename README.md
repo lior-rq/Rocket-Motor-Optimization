@@ -63,10 +63,11 @@ and never modified. Nine dimensions can be varied:
 | `exit` | nozzle exit diameter, floored at 1.15 × throat |
 | `throat_length` | nozzle throat length |
 
-Each dimension takes a machining step, such as 0.01 in or 1/16 in. The optimiser only
-returns values that fall on that grid. Bounds, objectives and limits are configured in
-the application, with defaults taken from the `.ric` file's own `maxPressure`,
-`maxMassFlux` and `minPortThroat` values.
+Each dimension takes a machining step, 0.05 in by default. The optimiser only returns
+values that fall on that grid. Bounds, objectives and limits are configured in the
+application. The limits start at peak chamber pressure 500 psi, peak Kn 225, peak mass
+flux 1.05 lb/in²s and port/throat ratio 1.4, which are amateur-practice numbers rather
+than the case rating a `.ric` file usually carries.
 
 Sixteen metrics are available as objectives. Each can be maximised, minimised or
 driven toward a target value. Selecting two produces a trade-off curve rather than a
@@ -74,9 +75,11 @@ single result.
 
 ## How results are produced
 
-Two search modes are available. The fast mode runs a genetic search directly against
-openMotor. The trade-off mode samples the design space, trains surrogate models, runs
-NSGA-II against those models, and then re-simulates the survivors.
+Two search modes are available. The full search runs a genetic search directly against
+openMotor, so every candidate is a real simulation. The surrogate search samples the
+design space, trains models on those samples, runs NSGA-II against the models, and then
+re-simulates the survivors. It is cheaper and faster, and it is marked beta in the
+application because its answers come from a model rather than from the simulator.
 
 Every design that appears in a result has been simulated in openMotor at the
 verification timestep with all search-time safety margins removed. Surrogate models
@@ -91,8 +94,23 @@ limit during the search still satisfies it after verification.
 
 A single search is not guaranteed to find the global front, so a run divides its
 budget across several independent searches and reports the non-dominated set of
-everything they find. The budget and the number of searches are both configurable.
-Population size and generation count are derived from them.
+everything they find. Four presets set the budget and the search count together;
+population size and generation count are derived from them.
+
+| Preset | Budget | Searches | Per search | Population × generations |
+|---|---|---|---|---|
+| Quick | 2,400 | 2 | 1,200 | 40 × 30 |
+| Standard | 4,800 | 3 | 1,600 | 40 × 40 |
+| Thorough | 10,000 | 5 | 2,000 | 40 × 50 |
+| Extreme | 24,000 | 8 | 3,000 | 60 × 50 |
+
+These come from a measurement on a nine-dimension, two-objective configuration at a
+0.05 in step: the best motor stopped improving a little past 2,000 simulations, and
+independent searches stopped paying at about five. The boxes behind them are editable
+once *I know what I'm doing* is ticked.
+
+Time estimates are not shown until the diagnostic on the settings page has measured
+this machine at these settings, since a rate the program has not measured is a guess.
 
 ## Two properties that reduce the search space
 

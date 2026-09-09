@@ -214,7 +214,7 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
 <hr class="rule">
 
 <section>
-  <h2>The panels, in order</h2>
+  <h2>The steps, in order</h2>
 
   <ol class="steps">
     <li>
@@ -248,12 +248,13 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       length. Unticking a row holds that dimension at its current value and removes it
       from the search entirely, rather than searching it over a zero-width range.</p>
       <p><strong>Step</strong> sets the machining grid. It accepts decimals and shop
-      fractions, so <code>0.01</code>, <code>1/16</code>, <code>1 1/16</code> and
+      fractions, so <code>0.05</code>, <code>1/16</code>, <code>1 1/16</code> and
       <code>2-1/2</code> are all valid. Left blank, the optimiser returns arbitrary
       values such as a 2.4713&Prime; core. The grid is anchored at zero, so a
       1/16&Prime; step yields whole sixteenths rather than sixteenths measured from
       the lower bound.</p>
-      <p>The buttons below the table set every step at once. <code>0.01&Prime;</code>
+      <p>The buttons below the table set every step at once. The default is
+      <code>0.05&Prime;</code>. <code>0.01&Prime;</code>
       is two decimal places, which is the finest tolerance commonly held.</p>
     </li>
 
@@ -263,7 +264,8 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <p>This panel updates as the configuration changes. It counts <em>distinct
       motors</em> rather than grid points, since cores are stored sorted and one set of
       six diameters therefore represents one motor rather than 720. The figure reaches
-      the order of 10¹⁹ for nine free dimensions on a 0.01&Prime; grid, which is why the
+      the order of 10¹³ for nine free dimensions on a 0.05&Prime; grid, and 10¹⁹ on a
+      0.01&Prime; one, which is why the
       application uses a genetic search rather than enumeration.</p>
       <p>Where a Kn limit is set, the panel also reports what the limits provably exclude
       and offers <strong>Apply tighter bounds</strong>, which narrows the search to the
@@ -282,12 +284,17 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     </li>
 
     <li>
-      <span class="panel-name">Limits it must respect</span>
+      <span class="panel-name">Design Constraints</span>
       <h3>Set the envelope</h3>
-      <p>Rows of <em>metric</em> ≤ or ≥ <em>value</em>, initialised from the loaded
-      file's own <code>maxPressure</code>, <code>maxMassFlux</code> and
-      <code>minPortThroat</code> settings. Unticking a row ignores that limit, and
-      <strong>+ add</strong> introduces further ones.</p>
+      <p>Rows of <em>metric</em> ≤ or ≥ <em>value</em>. The defaults are peak chamber
+      pressure 500 psi, peak Kn 225, peak mass flux 1.05 lb/in&sup2;s and port/throat
+      ratio 1.4, which are amateur-practice numbers rather than the case rating a
+      <code>.ric</code> file usually carries. Unticking a row ignores that limit, and
+      <strong>+ add</strong> introduces further ones. Two limits on the same metric are
+      flagged, since only the tighter one binds.</p>
+      <p>Below the table, the loaded motor is shown against every limit, both as a
+      table and as its pressure, Kn and mass flux over time with the limits drawn on
+      as dotted lines.</p>
       <p>No design is reported unless it satisfies every ticked limit when re-simulated
       at full fidelity with all safety margins removed.</p>
     </li>
@@ -314,18 +321,41 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     <li>
       <span class="panel-name">How hard to look</span>
       <h3>Set the budget and the number of searches</h3>
-      <p>Quick, Standard and Thorough set a simulation budget of 3,600, 14,400 or
-      43,200 respectively, and a custom figure can be entered instead.
-      <strong>Independent searches</strong> divides that budget across separate runs and
-      merges their results.</p>
-      <p>Increasing the number of searches is generally more effective than increasing
-      the budget. On one test motor, three merged searches of 4,800 simulations produced
-      a better result than a single search of 14,400 at the same total cost.</p>
-      <p><em>Map the full trade-off</em> trains surrogate models before searching. This
-      is slower but produces a denser curve. The plain search is sufficient for most
-      work.</p>
-      <p><strong>Cores to use</strong> sets how many simulations run at once. The
-      default leaves two cores free so the machine remains usable during a search.</p>
+      <p>Four presets set the simulation budget and the number of independent searches
+      together.</p>
+      <div class="scroll" style="margin-top:12px">
+      <table>
+        <thead><tr><th>Preset</th><th>Budget</th><th>Searches</th>
+          <th>Per search</th><th>Population &times; generations</th></tr></thead>
+        <tbody>
+          <tr><td>Quick</td><td>2,400</td><td>2</td><td>1,200</td><td>40 &times; 30</td></tr>
+          <tr><td>Standard</td><td>4,800</td><td>3</td><td>1,600</td><td>40 &times; 40</td></tr>
+          <tr><td>Thorough</td><td>10,000</td><td>5</td><td>2,000</td><td>40 &times; 50</td></tr>
+          <tr><td>Extreme</td><td>24,000</td><td>8</td><td>3,000</td><td>60 &times; 50</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>These figures come from a measurement on a nine-dimension, two-objective
+      configuration at a 0.05&Prime; step. The best motor stopped improving a little past
+      2,000 simulations, and independent searches stopped paying at about five.
+      Increasing the number of searches is generally more effective than increasing the
+      budget, up to that point.</p>
+      <p>The boxes behind the presets are read-only until <em>I know what I&rsquo;m
+      doing</em> is ticked, which unlocks the budget, the search count and the core
+      count.</p>
+      <p><em>Surrogate search</em> samples the space, trains models on those
+      simulations, and searches the models rather than openMotor. It is cheaper and
+      faster and it maps the whole trade-off curve, but its answers come from a model
+      and are not guaranteed to be the best available, which is why it is marked beta.
+      The full search runs every candidate through openMotor.</p>
+      <p><strong>Cores to use</strong> sets how many simulations run at once. Automatic
+      uses the machine&rsquo;s performance cores where the platform reports them, since
+      the slowest worker sets the pace and adding efficiency cores makes a run longer
+      rather than shorter.</p>
+      <p>No time estimate is shown until <strong>Run the diagnostic</strong> has timed
+      real simulations at these settings. A rate the program has not measured on this
+      machine is a guess. The measured figure is then increased by 20% to account for
+      the machine slowing down as it heats up.</p>
     </li>
   </ol>
 </section>

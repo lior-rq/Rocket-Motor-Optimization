@@ -364,7 +364,7 @@ table.vars.hardware select {
 
 .row.tol { grid-template-columns: auto minmax(0,1fr) auto auto; }
 .row.tol .tol-name { font-size: 12px; color: var(--ink-2); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+  text-overflow: ellipsis; white-space: nowrap; }
 .row.tol input[type="text"] { width: 64px; }
 
 .robust { display: flex; flex-direction: column; gap: 12px; }
@@ -518,3 +518,55 @@ table.vars.hardware select {
   font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------- wizard extras */
+
+.motor-thrust.tall { height: 420px; }
+
+.effort-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px; margin-bottom: 14px; }
+.effort { display: flex; flex-direction: column; gap: 3px; text-align: left;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2); color: var(--ink-2); cursor: pointer; }
+.effort:hover { border-color: var(--ink-3); }
+.effort.active { border-color: var(--accent); background: var(--accent-2);
+  color: var(--ink); }
+.effort .name { font-size: 13px; font-weight: 600; color: var(--ink); }
+.effort .figs { font-family: var(--mono); font-size: 10.5px; }
+.effort .figs.dim { color: var(--ink-3); }
+.effort .time { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+
+.field .readout { font-family: var(--mono); font-size: 13px; color: var(--ink);
+  padding: 7px 0; }
+.beta { font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em;
+  padding: 1px 5px; border-radius: 4px; background: var(--accent-2);
+  color: var(--accent); vertical-align: 1px; }
+
+.checklist { list-style: none; margin: 0; padding: 0; display: flex;
+  flex-direction: column; gap: 7px; }
+.checklist label { display: flex; gap: 9px; align-items: flex-start;
+  font-size: 12px; color: var(--ink-2); cursor: pointer; }
+.checklist input { margin-top: 2px; }
+
+.dupes:empty { display: none; }
+.dupes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+
+.speed { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 12px; }
+.speed-row { display: flex; align-items: center; gap: 10px; font-size: 11.5px; }
+.speed-row .k { color: var(--ink-3); width: 70px; }
+.speed-row .bar { flex: 1; height: 6px; border-radius: 3px;
+  background: var(--surface-2); overflow: hidden; }
+.speed-row .bar .fill { height: 100%; background: var(--accent);
+  transition: width .5s ease; }
+.speed-row .v, .speed-row .eta { font-family: var(--mono); color: var(--ink);
+  font-variant-numeric: tabular-nums; }
+
+.axis-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: var(--ink-3); margin-top: 8px; }
+.axis-controls .label { text-transform: uppercase; letter-spacing: .06em; }
+.axis-controls label { color: var(--ink-2); margin-left: 6px; }
+.axis-controls input { width: 84px; font-family: var(--mono); font-size: 11px;
+  padding: 4px 6px; }
+
+.sigma { margin: 0; font-size: 11px; }
+.card h2.plain { text-transform: none; letter-spacing: 0; }

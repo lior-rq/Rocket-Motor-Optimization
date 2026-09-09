@@ -148,12 +148,18 @@ class OrderingSpec:
         )
 
 
-#: Total simulation budget per preset, split across independent searches: a
-#: genetic search converges on whatever basin it started in.
+#: Budget and search count per preset. Measured on the reference configuration:
+#: the best motor stops improving a little past 2,000 simulations, and extra
+#: independent searches stop paying at about five.
 EFFORT_LEVELS = {
-    "quick":     {"budget": 3600,  "samples": 2048,  "label": "Quick"},
-    "standard":  {"budget": 14400, "samples": 8192,  "label": "Standard"},
-    "thorough":  {"budget": 43200, "samples": 16384, "label": "Thorough"},
+    "quick":    {"budget": 2400,  "seeds": 2, "samples": 2048,
+                 "label": "Quick",    "seconds": 120},
+    "standard": {"budget": 4800,  "seeds": 3, "samples": 4096,
+                 "label": "Standard", "seconds": 180},
+    "thorough": {"budget": 10000, "seeds": 5, "samples": 8192,
+                 "label": "Thorough", "seconds": 360},
+    "extreme":  {"budget": 24000, "seeds": 8, "samples": 16384,
+                 "label": "Extreme",  "seconds": 720},
 }
 
 #: Generations per search; population is whatever the budget then affords.
@@ -175,9 +181,10 @@ class RunSpec:
     budget_simulations: Optional[int] = None
     #: Independent searches to run and merge. Each is seeded differently, and
     #: the reported front is the non-dominated set of everything they found.
-    seeds: int = 3
-    #: Simulations at once. None means two short of the core count. Scaling is
-    #: near-linear to four workers and can reverse past the performance cores.
+    #: None follows the preset.
+    seeds: Optional[int] = None
+    #: Simulations at once. None means the machine's performance cores. Scaling
+    #: is near-linear to four workers and reverses past those cores.
     workers: Optional[int] = None
     #: "fast" runs the genetic search straight against openMotor. "pareto" adds
     #: a surrogate and maps the whole trade-off between objectives.
@@ -186,6 +193,8 @@ class RunSpec:
     #: Impulse reads ~0.5%% low at 0.02 s; 0.01 s halves that for twice the cost.
     search_timestep: float = 0.01
     verify_timestep: float = 0.002
+    #: Unlocks the budget, seed and core boxes. Off, they follow the preset.
+    expert: bool = False
     display_units: Dict[str, str] = field(
         default_factory=lambda: {"length": "in", "pressure": "psi",
                                  "mass_flux": "lb/(in^2*s)"})
@@ -205,14 +214,15 @@ class RunSpec:
         """Total budget split into a population and generation count per seed."""
         preset = EFFORT_LEVELS.get(self.effort, EFFORT_LEVELS["standard"])
         total = int(self.budget_simulations or preset["budget"])
-        seeds = max(1, int(self.seeds))
+        seeds = max(1, int(self.seeds or preset["seeds"]))
         per_seed = max(total // seeds, MIN_POPULATION * 2)
         pop = int(min(max(per_seed // TARGET_GENERATIONS, MIN_POPULATION),
                       MAX_POPULATION))
         gen = max(int(per_seed // pop), 2)
         return {"pop": pop, "gen": gen, "seeds": seeds,
                 "per_seed": pop * gen, "total": pop * gen * seeds,
-                "samples": preset["samples"], "label": preset["label"]}
+                "samples": preset["samples"], "label": preset["label"],
+                "preset_seconds": preset["seconds"]}
 
     def problems(self) -> List[Tuple[str, str]]:
         """(area, message) for everything wrong, so the interface can send the
@@ -264,6 +274,7 @@ class RunSpec:
             "budget_simulations": self.budget_simulations,
             "seeds": self.seeds,
             "workers": self.workers,
+            "expert": self.expert,
             "mode": self.mode,
             "seed": self.seed,
             "search_timestep": self.search_timestep,
@@ -281,8 +292,9 @@ class RunSpec:
             effort=data.get("effort", "standard"),
             budget_simulations=(int(data["budget_simulations"])
                                 if data.get("budget_simulations") else None),
-            seeds=max(1, int(data.get("seeds", 3) or 1)),
+            seeds=(max(1, int(data["seeds"])) if data.get("seeds") else None),
             workers=(max(1, int(data["workers"])) if data.get("workers") else None),
+            expert=bool(data.get("expert", False)),
             mode=data.get("mode", "fast"),
             seed=int(data.get("seed", 17)),
             search_timestep=float(data.get("search_timestep", 0.01)),

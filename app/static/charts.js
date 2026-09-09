@@ -35,9 +35,29 @@ const Charts = (() => {
 
   const CONFIG = { displayModeBar: false, responsive: true };
 
+  // Plotly 4 ignores a plain string here, so every axis title in the app was
+  // silently dropped. Written once, applied to every layout that goes out.
+  function fixTitles(layout) {
+    Object.keys(layout).forEach(key => {
+      if (!/^[xy]axis\d*$/.test(key)) return;
+      const axis = layout[key];
+      if (axis && typeof axis.title === 'string') {
+        layout[key] = Object.assign({}, axis, { title: { text: axis.title } });
+      }
+    });
+    return layout;
+  }
+
   function draw(node, traces, extra) {
-    const layout = Object.assign(theme(), extra || {});
+    const layout = fixTitles(Object.assign(theme(), extra || {}));
     Plotly.react(node, traces, layout, CONFIG);
+  }
+
+  //: Impulse reads as the horizontal axis and thrust as the vertical one, so
+  //: the pair is always drawn that way whichever order the run reports.
+  function orderAxes(pair) {
+    const [a, b] = pair;
+    return (b === 'total_impulse' && a !== 'total_impulse') ? [b, a] : [a, b];
   }
 
   /* ------------------------------------------------------------ helpers */
@@ -693,14 +713,21 @@ const Charts = (() => {
 
   function resetLive() { LIVE.ghosts = []; LIVE.lastSeed = -1; }
 
-  function liveFrame(node, snap) {
-    const [ax, ay] = snap.metrics;
+  function liveFrame(node, snap, range) {
+    const [ax, ay] = orderAxes(snap.metrics);
+    // Every series arrives in the run's own metric order, so putting impulse on
+    // the horizontal axis has to move the data as well as the labels.
+    const flip = ax !== snap.metrics[0];
+    const xy = p => flip ? [p[1], p[0], p[2]] : p;
     // A new seed starts somewhere else entirely; carrying its predecessor's
     // trail over would read as one search teleporting.
     if (snap.seed_index !== LIVE.lastSeed) { LIVE.ghosts = []; LIVE.lastSeed = snap.seed_index; }
 
-    const feas = snap.points.filter(p => p[2]);
-    const infeas = snap.points.filter(p => !p[2]);
+    const points = snap.points.map(xy);
+    const front = snap.front.map(xy);
+    const baseline = snap.baseline ? xy(snap.baseline) : null;
+    const feas = points.filter(p => p[2]);
+    const infeas = points.filter(p => !p[2]);
     LIVE.ghosts.push(feas.map(p => [p[0], p[1]]));
     if (LIVE.ghosts.length > 14) LIVE.ghosts.shift();
 
@@ -721,25 +748,93 @@ const Charts = (() => {
         name: 'legal', type: 'scatter',
         marker: { size: 7, color: SERIES[0], opacity: .9,
                   line: { color: css('--surface'), width: 1 } }, hoverinfo: 'skip' },
-      { x: snap.baseline ? [snap.baseline[0]] : [],
-        y: snap.baseline ? [snap.baseline[1]] : [],
+      { x: baseline ? [baseline[0]] : [],
+        y: baseline ? [baseline[1]] : [],
         mode: 'markers', name: 'your motor', type: 'scatter',
         marker: { size: 11, color: LIMIT, symbol: 'diamond',
                   line: { color: css('--surface'), width: 1.5 } }, hoverinfo: 'skip' },
-      { x: snap.front.map(p => p[0]), y: snap.front.map(p => p[1]),
+      { x: front.map(p => p[0]), y: front.map(p => p[1]),
         mode: 'lines+markers', name: 'best so far', type: 'scatter',
         line: { color: SERIES[1], width: 2 },
         marker: { size: 7, color: SERIES[1], line: { color: css('--surface'), width: 1 } },
         hoverinfo: 'skip' }
     ]);
 
-    Plotly.react(node, traces, Object.assign(theme(), {
+    // uirevision holds any pan or zoom across frames, and an explicit range
+    // stops the axes rescaling under the user on every generation.
+    Plotly.react(node, traces, fixTitles(Object.assign(theme(), {
       showlegend: true,
       transition: { duration: 320, easing: 'cubic-in-out' },
-      margin: { l: 62, r: 18, t: 8, b: 44 },
-      xaxis: Object.assign(theme().xaxis, { title: axisTitle(ax) }),
-      yaxis: Object.assign(theme().yaxis, { title: axisTitle(ay) })
-    }), { displayModeBar: false, responsive: true });
+      margin: { l: 70, r: 18, t: 8, b: 52 },
+      uirevision: 'live',
+      dragmode: 'pan',
+      xaxis: Object.assign(theme().xaxis, { title: axisTitle(ax),
+                                            range: range && range.x, autorange: !range }),
+      yaxis: Object.assign(theme().yaxis, { title: axisTitle(ay),
+                                            range: range && range.y, autorange: !range })
+    })), { displayModeBar: false, responsive: true, scrollZoom: true });
+  }
+
+  /* ------------------------------------------------- behaviour over time */
+
+  const PA_PSI = 6894.757293168361, KG_LB = 703.0696;
+
+  //: One stacked row each, sharing the time axis. Every row names its own
+  //: quantity and unit, and carries the limit that applies to it.
+  const BEHAVIOUR = {
+    thrust: { title: 'Thrust (N)', colour: SERIES[0],
+              series: c => c.thrust, limits: [] },
+    pressure: { title: 'Pressure (psi)', colour: SERIES[1],
+                series: c => c.pressure.map(v => v / PA_PSI),
+                limits: ['max_pressure', 'avg_pressure'],
+                scale: v => v / PA_PSI },
+    kn: { title: 'Kn', colour: SERIES[2],
+          series: c => c.kn, limits: ['peak_kn'], scale: v => v },
+    mass_flux: { title: 'Mass flux (lb/in\u00b2s)', colour: LIMIT,
+                 // Per grain in openMotor; the limit applies to the worst one.
+                 series: c => worstFlux(c), limits: ['peak_mass_flux'],
+                 scale: v => v / KG_LB }
+  };
+
+  function worstFlux(c) {
+    const grains = (c.mass_flux || []).filter(g => g && g.length);
+    if (!grains.length) return [];
+    return c.time.map((_, i) =>
+      Math.max.apply(null, grains.map(g => (g[i] || 0) / KG_LB)));
+  }
+
+  function behaviourStack(node, c, constraints, keys) {
+    if (!c || !c.time || !c.time.length) { node.innerHTML = ''; return; }
+    const rows = keys.filter(k => BEHAVIOUR[k] && BEHAVIOUR[k].series(c).length);
+    if (!rows.length) { node.innerHTML = ''; return; }
+
+    const t = theme();
+    const gap = 0.08, band = (1 + gap) / rows.length;
+    const traces = [], layout = {
+      grid: { rows: rows.length, columns: 1, pattern: 'independent',
+              roworder: 'top to bottom' },
+      margin: { l: 74, r: 18, t: 10, b: 46 }, showlegend: false, shapes: []
+    };
+
+    rows.forEach((key, i) => {
+      const row = BEHAVIOUR[key];
+      const n = i === 0 ? '' : String(i + 1);
+      const top = 1 - i * band, bottom = Math.max(top - band + gap, 0);
+      traces.push({ x: c.time, y: row.series(c), mode: 'lines', name: row.title,
+                    line: { color: row.colour, width: 2 },
+                    xaxis: 'x' + n, yaxis: 'y' + n });
+      const last = i === rows.length - 1;
+      layout['xaxis' + n] = Object.assign({}, t.xaxis, {
+        anchor: 'y' + n, matches: i ? 'x' : undefined,
+        title: last ? 'Time (s)' : undefined, showticklabels: last });
+      layout['yaxis' + n] = Object.assign({}, t.yaxis, {
+        title: row.title, domain: [bottom, top], rangemode: 'tozero' });
+      (constraints || []).forEach(con => {
+        if (!con.enabled || row.limits.indexOf(con.metric) < 0) return;
+        layout.shapes.push(hline(row.scale(con.value), 'y' + n));
+      });
+    });
+    draw(node, traces, layout);
   }
 
   function liveSpark(node, trace) {
@@ -762,6 +857,6 @@ const Charts = (() => {
   }
 
   return { PANELS, PROFILES, theme, draw, metricValue, metricLabel, axisTitle,
-           liveFrame, liveSpark, resetLive,
+           liveFrame, liveSpark, resetLive, orderAxes, behaviourStack,
            crossSectionSVG, parallelSVG, deltaTable };
 })();

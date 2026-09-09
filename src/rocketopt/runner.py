@@ -201,8 +201,8 @@ def apply_hardware(base_motor: Dict, grain_diameter: Optional[float] = None,
 def default_spec(base_motor: Dict) -> RunSpec:
     """A starting configuration read off the motor itself.
 
-    Bounds bracket the motor as loaded; limits come from its own maxPressure,
-    maxMassFlux and minPortThroat.
+    Bounds bracket the motor as loaded. Limits are the amateur-practice
+    numbers rather than the file's own, which are usually the case rating.
     """
     from .spec import ConstraintSpec, ObjectiveSpec, OrderingSpec
 
@@ -211,10 +211,10 @@ def default_spec(base_motor: Dict) -> RunSpec:
     cores = [g["properties"]["coreDiameter"] for g in grains]
     throat = base_motor["nozzle"]["throat"]
     exit_d = base_motor["nozzle"]["exit"]
-    cfg = base_motor["config"]
 
-    # A hundredth of an inch; finer is not held on a mandrel or reamer.
-    grid = 0.01 * M_PER_IN
+    # A twentieth of an inch. Finer is not held on a mandrel or reamer, and a
+    # coarser grid is a far smaller space to search.
+    grid = 0.05 * M_PER_IN
     min_web = 0.25 * M_PER_IN
     throat_length = base_motor["nozzle"].get("throatLength", 0.2 * M_PER_IN)
 
@@ -238,16 +238,16 @@ def default_spec(base_motor: Dict) -> RunSpec:
         step=grid, fixed_value=throat_length, unit="m", label="Throat length"))
 
     constraints = [
-        ConstraintSpec(metric="max_pressure", op="<=", value=cfg["maxPressure"],
+        ConstraintSpec(metric="max_pressure", op="<=", value=500 * PA_PER_PSI,
                        label="Peak chamber pressure"),
-        ConstraintSpec(metric="peak_mass_flux", op="<=", value=cfg["maxMassFlux"],
+        ConstraintSpec(metric="peak_kn", op="<=", value=225.0,
+                       label="Peak Kn"),
+        ConstraintSpec(metric="peak_mass_flux", op="<=", value=1.05 * KG_M2S_PER_LB_IN2S,
                        label="Peak mass flux"),
-        ConstraintSpec(metric="port_throat", op=">=", value=cfg["minPortThroat"],
+        ConstraintSpec(metric="port_throat", op=">=", value=1.4,
                        label="Port/throat ratio"),
         ConstraintSpec(metric="avg_pressure", op=">=", value=200 * PA_PER_PSI,
-                       label="Mean chamber pressure"),
-        ConstraintSpec(metric="peak_kn", op="<=", value=250.0, enabled=False,
-                       label="Peak Kn"),
+                       enabled=False, label="Mean chamber pressure"),
         ConstraintSpec(metric="total_impulse", op=">=", value=0.0, enabled=False,
                        label="Total impulse"),
     ]
@@ -255,8 +255,7 @@ def default_spec(base_motor: Dict) -> RunSpec:
         variables=variables,
         objectives=[
             ObjectiveSpec(metric="initial_thrust", direction="max", weight=1.0),
-            ObjectiveSpec(metric="total_impulse", direction="max", weight=1.0,
-                          enabled=False),
+            ObjectiveSpec(metric="total_impulse", direction="max", weight=1.0),
         ],
         constraints=constraints,
         ordering=OrderingSpec(mode="nondecreasing"),

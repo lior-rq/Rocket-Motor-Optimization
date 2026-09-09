@@ -504,7 +504,8 @@ const App = (() => {
 
     const seeds = $('#seedCount');
     seeds.innerHTML = [1, 2, 3, 4, 5, 6, 8].map(n =>
-      `<option value="${n}" ${n === state.spec.seeds ? 'selected' : ''}>${
+      `<option value="${n}" ${n === (state.spec.seeds ||
+        (state.effortLevels[state.spec.effort] || {}).seeds) ? 'selected' : ''}>${
         n === 1 ? '1 — no merging' : n + ' merged'}</option>`).join('');
     seeds.onchange = () => {
       state.spec.seeds = Number(seeds.value); renderEffort(); validate();
