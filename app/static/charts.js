@@ -621,8 +621,8 @@ const Charts = (() => {
             stroke="var(--ink-3)" stroke-dasharray="3 3" stroke-width="0.8" opacity="0.6"/>`;
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img"
       aria-label="Motor cross-section, forward at left">${out}</svg>
-      <p class="sub" style="margin-top:6px">Throat ${App.fmtLen(d.throat)} ·
-      exit ${App.fmtLen(d.exit)} · expansion ${(d.exit / d.throat * d.exit / d.throat).toFixed(2)}</p>`;
+      <p class="cross-cap">Throat ${App.fmtLen(d.throat)} &middot;
+      exit ${App.fmtLen(d.exit)} &middot; expansion ${(d.exit / d.throat * d.exit / d.throat).toFixed(2)}</p>`;
   }
 
   const SPEC_ROWS = [
@@ -760,19 +760,56 @@ const Charts = (() => {
         hoverinfo: 'skip' }
     ]);
 
-    // uirevision holds any pan or zoom across frames, and an explicit range
-    // stops the axes rescaling under the user on every generation.
-    Plotly.react(node, traces, fixTitles(Object.assign(theme(), {
+    const already = node.data && node.data.length;
+    const layout = fixTitles(Object.assign(theme(), {
       showlegend: true,
-      transition: { duration: 320, easing: 'cubic-in-out' },
       margin: { l: 70, r: 18, t: 8, b: 52 },
       uirevision: 'live',
       dragmode: 'pan',
-      xaxis: Object.assign(theme().xaxis, { title: axisTitle(ax),
-                                            range: range && range.x, autorange: !range }),
-      yaxis: Object.assign(theme().yaxis, { title: axisTitle(ay),
-                                            range: range && range.y, autorange: !range })
-    })), { displayModeBar: false, responsive: true, scrollZoom: true });
+      xaxis: Object.assign(theme().xaxis, { title: axisTitle(ax) }),
+      yaxis: Object.assign(theme().yaxis, { title: axisTitle(ay) })
+    }));
+    // The range is set once, on the first frame. Re-sending it every frame
+    // fought the user's own pan: the drag applied, the next frame put the
+    // stored range back, and uirevision then re-applied the drag -- which is
+    // the jump back and forth. After that first frame the axes belong to the
+    // user, and uirevision alone carries them across updates.
+    if (!already) {
+      if (range) { layout.xaxis.range = range.x; layout.yaxis.range = range.y; }
+      Plotly.newPlot(node, traces, layout,
+                     { displayModeBar: false, responsive: true, scrollZoom: true });
+      return;
+    }
+    // Data only. Plotly.restyle leaves the axes untouched, so a drag in
+    // progress is never interrupted by an arriving generation.
+    Plotly.react(node, traces, layout,
+                 { displayModeBar: false, responsive: true, scrollZoom: true });
+  }
+
+  //: What the axes are showing right now, so a stretch control starts from
+  //: wherever the user last left them rather than from the stored range.
+  function liveAxes(node) {
+    if (!node || !node.layout) return null;
+    const x = node.layout.xaxis, y = node.layout.yaxis;
+    return (x && x.range && y && y.range)
+      ? { x: x.range.slice(), y: y.range.slice() } : null;
+  }
+
+  //: Widens or narrows one axis about its own midpoint.
+  function stretchAxis(node, axis, factor) {
+    const now = liveAxes(node);
+    if (!now) return;
+    const [lo, hi] = now[axis];
+    const mid = (lo + hi) / 2, half = (hi - lo) / 2 * factor;
+    Plotly.relayout(node, axis === 'x'
+      ? { 'xaxis.range': [mid - half, mid + half] }
+      : { 'yaxis.range': [mid - half, mid + half] });
+  }
+
+  function fitAxes(node, range) {
+    if (!node || !range) return;
+    Plotly.relayout(node, { 'xaxis.range': range.x.slice(),
+                            'yaxis.range': range.y.slice() });
   }
 
   /* ------------------------------------------------- behaviour over time */
@@ -803,38 +840,146 @@ const Charts = (() => {
       Math.max.apply(null, grains.map(g => (g[i] || 0) / KG_LB)));
   }
 
+  //: Each quantity keeps its own axis and its own units, so one chart carries
+  //: all four without pretending they share a scale.
+  const AXIS_SLOT = [
+    { key: 'yaxis',  side: 'left',  anchor: 'x',    position: null },
+    { key: 'yaxis2', side: 'right', anchor: 'x',    position: null },
+    { key: 'yaxis3', side: 'left',  anchor: 'free', position: 0 },
+    { key: 'yaxis4', side: 'right', anchor: 'free', position: 1 }
+  ];
+
   function behaviourStack(node, c, constraints, keys) {
     if (!c || !c.time || !c.time.length) { node.innerHTML = ''; return; }
     const rows = keys.filter(k => BEHAVIOUR[k] && BEHAVIOUR[k].series(c).length);
     if (!rows.length) { node.innerHTML = ''; return; }
 
     const t = theme();
-    const gap = 0.08, band = (1 + gap) / rows.length;
-    const traces = [], layout = {
-      grid: { rows: rows.length, columns: 1, pattern: 'independent',
-              roworder: 'top to bottom' },
-      margin: { l: 74, r: 18, t: 10, b: 46 }, showlegend: false, shapes: []
+    const outer = rows.length > 2 ? 0.055 : 0;
+    const layout = {
+      margin: { l: 8, r: 8, t: 12, b: 40 },
+      showlegend: true,
+      legend: Object.assign({}, t.legend, { y: -0.18 }),
+      hovermode: 'x unified',
+      shapes: [],
+      xaxis: Object.assign({}, t.xaxis, {
+        title: 'Time (s)', domain: [outer + 0.055, 1 - outer - 0.055] })
     };
-
-    rows.forEach((key, i) => {
-      const row = BEHAVIOUR[key];
-      const n = i === 0 ? '' : String(i + 1);
-      const top = 1 - i * band, bottom = Math.max(top - band + gap, 0);
-      traces.push({ x: c.time, y: row.series(c), mode: 'lines', name: row.title,
-                    line: { color: row.colour, width: 2 },
-                    xaxis: 'x' + n, yaxis: 'y' + n });
-      const last = i === rows.length - 1;
-      layout['xaxis' + n] = Object.assign({}, t.xaxis, {
-        anchor: 'y' + n, matches: i ? 'x' : undefined,
-        title: last ? 'Time (s)' : undefined, showticklabels: last });
-      layout['yaxis' + n] = Object.assign({}, t.yaxis, {
-        title: row.title, domain: [bottom, top], rangemode: 'tozero' });
+    const traces = rows.map((key, i) => {
+      const row = BEHAVIOUR[key], slot = AXIS_SLOT[i];
+      const name = slot.key === 'yaxis' ? 'y' : 'y' + slot.key.slice(5);
+      layout[slot.key] = Object.assign({}, t.yaxis, {
+        title: { text: row.title, font: { color: row.colour } },
+        tickfont: { color: row.colour, size: 9.5 }, nticks: 6, ticklen: 3,
+        linecolor: row.colour, rangemode: 'tozero',
+        side: slot.side, anchor: slot.anchor,
+        showgrid: i === 0,                 // one grid, or the chart is a mesh
+        overlaying: i ? 'y' : undefined,
+        position: slot.anchor === 'free'
+          ? (slot.side === 'left' ? 0 : 1) : undefined
+      });
       (constraints || []).forEach(con => {
         if (!con.enabled || row.limits.indexOf(con.metric) < 0) return;
-        layout.shapes.push(hline(row.scale(con.value), 'y' + n));
+        layout.shapes.push(hline(row.scale(con.value), name));
       });
+      return { x: c.time, y: row.series(c), mode: 'lines', name: row.title,
+               line: { color: row.colour, width: 2 }, yaxis: name };
     });
     draw(node, traces, layout);
+  }
+
+  /* -------------------------------------------------- the running screen */
+
+  //: A 240-degree sweep, drawn rather than plotted: Plotly has no gauge that
+  //: reads at a glance in a box this size. The reading sits under the dial
+  //: rather than inside it, so the needle never crosses its own number.
+  function speedometer(node, value, ceiling, label) {
+    const W = 180, H = 116, cx = 90, cy = 86, r = 66;
+    const START = 210, SWEEP = 240;            // clockwise, both ends below level
+    const frac = Math.max(0, Math.min(value / (ceiling || 1), 1));
+    const pt = (deg, rad) => {
+      const a = deg * Math.PI / 180;
+      return [cx + rad * Math.cos(a), cy - rad * Math.sin(a)];
+    };
+    const arc = (from, to, rad) => {
+      const [x0, y0] = pt(from, rad), [x1, y1] = pt(to, rad);
+      return `M ${x0.toFixed(1)} ${y0.toFixed(1)} A ${rad} ${rad} 0 ${
+        Math.abs(to - from) > 180 ? 1 : 0} 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+    };
+    const end = START - SWEEP, now = START - SWEEP * frac;
+    let ticks = '';
+    for (let i = 0; i <= 4; i++) {
+      const [x0, y0] = pt(START - SWEEP * i / 4, r - 10);
+      const [x1, y1] = pt(START - SWEEP * i / 4, r - 3);
+      ticks += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}"
+        x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"
+        stroke="var(--ink-3)" stroke-width="1.2" opacity=".45"/>`;
+    }
+    const [nx, ny] = pt(now, r - 17);
+    node.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img"
+      aria-label="${label}: ${value.toFixed(1)}">
+      <path d="${arc(START, end, r)}" fill="none" stroke="var(--line)"
+        stroke-width="8" stroke-linecap="round"/>
+      <path d="${arc(START, now, r)}" fill="none" stroke="var(--accent)"
+        stroke-width="8" stroke-linecap="round"/>
+      ${ticks}
+      <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"
+        stroke="var(--ink)" stroke-width="2.2" stroke-linecap="round"
+        class="gauge-needle"/>
+      <circle cx="${cx}" cy="${cy}" r="4.5" fill="var(--ink)"/>
+      <circle cx="${cx}" cy="${cy}" r="2" fill="var(--surface)"/>
+    </svg>
+    <div class="gauge-read"><span class="n">${value ? value.toFixed(1) : '\u2014'}</span>
+      <span class="u">${label}</span></div>`;
+  }
+
+  //: Where this generation's population sits on the leading objective. NSGA-II
+  //: keeps a spread rather than converging to a point, so the shape of this is
+  //: what says whether the search is still exploring.
+  function liveSpread(node, snap) {
+    if (!snap || !snap.points || !snap.points.length) { node.innerHTML = ''; return; }
+    const flip = orderAxes(snap.metrics)[0] !== snap.metrics[0];
+    const at = p => flip ? p[1] : p[0];
+    const ok = snap.points.filter(p => p[2]).map(at);
+    const bad = snap.points.filter(p => !p[2]).map(at);
+    draw(node, [
+      { x: bad, type: 'histogram', name: 'over a limit', nbinsx: 26,
+        marker: { color: css('--line') }, opacity: .95 },
+      { x: ok, type: 'histogram', name: 'legal', nbinsx: 26,
+        marker: { color: SERIES[0] }, opacity: .85 }
+    ], {
+      barmode: 'overlay', showlegend: false, bargap: 0.04,
+      margin: { l: 40, r: 10, t: 8, b: 34 },
+      uirevision: 'spread',
+      xaxis: Object.assign(theme().xaxis, { title: axisTitle(orderAxes(snap.metrics)[0]) }),
+      yaxis: Object.assign(theme().yaxis, { title: 'designs' })
+    });
+  }
+
+  //: Two numbers that say whether the population is healthy: how much of it is
+  //: legal, and how many designs the front is holding.
+  function liveHealth(node, history) {
+    if (!history || history.length < 2) { node.innerHTML = ''; return; }
+    const step = history.map((h, i) => i);
+    draw(node, [
+      { x: step, y: history.map(h => 100 * h.feasible), mode: 'lines',
+        name: 'legal', line: { color: SERIES[2], width: 2 }, yaxis: 'y' },
+      { x: step, y: history.map(h => h.front), mode: 'lines',
+        name: 'front', line: { color: SERIES[1], width: 2 }, yaxis: 'y2' }
+    ], {
+      showlegend: false,
+      margin: { l: 42, r: 42, t: 8, b: 40 },
+      uirevision: 'health',
+      xaxis: Object.assign(theme().xaxis, { title: 'Generations elapsed' }),
+      yaxis: Object.assign(theme().yaxis, {
+        title: { text: 'Legal (%)', font: { color: SERIES[2] } },
+        tickfont: { color: SERIES[2], size: 10 }, range: [0, 100] }),
+      yaxis2: Object.assign(theme().yaxis, {
+        title: { text: 'Front', font: { color: SERIES[1] } },
+        tickfont: { color: SERIES[1], size: 10 },
+        overlaying: 'y', side: 'right', showgrid: false, rangemode: 'tozero',
+        nticks: 4, tickformat: 'd' })
+    });
   }
 
   function liveSpark(node, trace) {
@@ -858,5 +1003,6 @@ const Charts = (() => {
 
   return { PANELS, PROFILES, theme, draw, metricValue, metricLabel, axisTitle,
            liveFrame, liveSpark, resetLive, orderAxes, behaviourStack,
+           speedometer, liveSpread, liveHealth, liveAxes, stretchAxis, fitAxes,
            crossSectionSVG, parallelSVG, deltaTable };
 })();

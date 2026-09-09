@@ -61,127 +61,172 @@
 <main class="wizard" id="wizard">
   <section class="step" data-wstep="0">
     <header class="step-head"><h1>Motor</h1><p>Load the motor to optimise</p></header>
-    <section class="card">
-      <h2>Loaded motor</h2>
-      <dl class="specs" id="motorSpecs"></dl>
-      <div class="warnings" id="motorWarnings"></div>
-    </section>
-    <section class="card">
-      <h2>Fixed hardware</h2>
-      <p class="hint">Read from the .ric file and never changed, either by the optimizer
-        or by this application.</p>
-      <table class="vars hardware">
-        <tbody>
-          <tr><td class="var-name">Grain outer diameter</td>
-              <td><input type="text" id="hwDiameter" disabled></td></tr>
-          <tr><td class="var-name">Grain length</td>
-              <td><input type="text" id="hwLength" disabled></td></tr>
-          <tr><td class="var-name">Number of grains</td>
-              <td><input type="text" id="hwCount" disabled></td></tr>
-          <tr><td class="var-name">Inhibited ends</td>
-              <td><select id="hwEnds">
-                <option value="Neither">Neither</option>
-                <option value="Top">Top</option>
-                <option value="Bottom">Bottom</option>
-                <option value="Both">Both</option>
-              </select></td></tr>
-        </tbody>
-      </table>
-      <div class="design-actions">
-        <button type="button" class="chip" id="btnHardware">Apply hardware</button>
-        <button type="button" class="chip" id="btnHardwareReset" hidden>Reset to file</button>
-        <span class="hw-flag" id="hwFlag" hidden>modified from file</span>
+    <div class="cols split">
+      <div class="col">
+        <section class="card">
+          <h2>Loaded motor</h2>
+          <dl class="specs" id="motorSpecs"></dl>
+          <div class="warnings" id="motorWarnings"></div>
+        </section>
+        <section class="card">
+          <h2>Fixed hardware</h2>
+          <p class="hint">Read from the .ric file and never changed, either by the
+            optimizer or by this application.</p>
+          <table class="vars hardware">
+            <tbody>
+              <tr><td class="var-name">Grain outer diameter</td>
+                  <td><input type="text" id="hwDiameter" disabled></td></tr>
+              <tr><td class="var-name">Grain length</td>
+                  <td><input type="text" id="hwLength" disabled></td></tr>
+              <tr><td class="var-name">Number of grains</td>
+                  <td><input type="text" id="hwCount" disabled></td></tr>
+              <tr><td class="var-name">Inhibited ends</td>
+                  <td><select id="hwEnds">
+                    <option value="Neither">Neither</option>
+                    <option value="Top">Top</option>
+                    <option value="Bottom">Bottom</option>
+                    <option value="Both">Both</option>
+                  </select></td></tr>
+            </tbody>
+          </table>
+          <div class="design-actions">
+            <button type="button" class="chip" id="btnHardware">Apply hardware</button>
+            <button type="button" class="chip" id="btnHardwareReset" hidden>Reset to file</button>
+            <span class="hw-flag" id="hwFlag" hidden>modified from file</span>
+          </div>
+        </section>
       </div>
-    </section>
+      <div class="col">
+        <section class="card">
+          <h2>Cross-section</h2>
+          <div id="motorPreview" class="motor-preview"></div>
+        </section>
+      </div>
+    </div>
     <section class="card">
       <h2>How it behaves as loaded</h2>
-      <div id="motorPreview" class="motor-preview"></div>
       <div id="motorThrust" class="motor-thrust tall"></div>
     </section>
   </section>
 
   <section class="step" data-wstep="1" hidden>
     <header class="step-head"><h1>Variables</h1><p>Choose what may change, and by how much</p></header>
-    <section class="card">
-      <div class="card-head">
-        <h2>What may change</h2>
-        <div class="head-actions">
-          <button type="button" class="link" data-all="free">all free</button>
-          <button type="button" class="link" data-all="fixed">all fixed</button>
-        </div>
+    <div class="cols wide-left">
+      <div class="col">
+        <section class="card">
+          <div class="card-head">
+            <h2>What may change</h2>
+            <div class="head-actions">
+              <button type="button" class="link" data-all="free">all free</button>
+              <button type="button" class="link" data-all="fixed">all fixed</button>
+            </div>
+          </div>
+          <p class="hint">Untick a row to hold a dimension at its current value.
+            <strong>Step</strong> is the machining grid. Accepts <code>1/16</code> or
+            <code>0.05</code>, or leave blank for any size.</p>
+          <div class="table-scroll">
+            <table class="vars">
+              <thead><tr><th></th><th>Dimension</th><th class="n">Min</th><th class="n">Max</th><th class="n">Step</th></tr></thead>
+              <tbody id="varRows"></tbody>
+            </table>
+          </div>
+          <div class="quick-steps">
+            <span class="label">Set every step to</span>
+            <button type="button" class="chip" data-step="0">any</button>
+            <button type="button" class="chip" data-step="0.01">0.01&Prime;</button>
+            <button type="button" class="chip" data-step="0.05">0.05&Prime;</button>
+            <button type="button" class="chip" data-step="0.1">0.1&Prime;</button>
+            <button type="button" class="chip" data-step="0.0625">1/16&Prime;</button>
+          </div>
+        </section>
       </div>
-      <p class="hint">Untick a row to hold a dimension at its current value. <strong>Step</strong>
-        is the machining grid. Accepts <code>1/16</code> or <code>0.05</code>, or
-        leave blank for any size.</p>
-      <div class="table-scroll">
-        <table class="vars">
-          <thead><tr><th></th><th>Dimension</th><th class="n">Min</th><th class="n">Max</th><th class="n">Step</th></tr></thead>
-          <tbody id="varRows"></tbody>
-        </table>
+      <div class="col">
+        <section class="card">
+          <h2>Grain cores</h2>
+          <div class="field">
+            <select id="orderingMode"></select>
+          </div>
+          <p class="hint" id="orderingNote"></p>
+          <div class="field" id="orderingStepField" hidden>
+            <label for="orderingStep">Minimum increase per grain</label>
+            <input type="text" id="orderingStep" inputmode="decimal">
+          </div>
+          <div class="field" id="orderingGroupsField" hidden>
+            <label for="orderingGroups">Mandrel sizes</label>
+            <select id="orderingGroups"></select>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Free dimensions</h2>
+          <div class="free-summary" id="freeSummary"></div>
+        </section>
       </div>
-      <div class="quick-steps">
-        <span class="label">Set every step to</span>
-        <button type="button" class="chip" data-step="0">any</button>
-        <button type="button" class="chip" data-step="0.01">0.01&Prime;</button>
-        <button type="button" class="chip" data-step="0.05">0.05&Prime;</button>
-        <button type="button" class="chip" data-step="0.1">0.1&Prime;</button>
-        <button type="button" class="chip" data-step="0.0625">1/16&Prime;</button>
-      </div>
-    </section>
-    <section class="card">
-      <h2>Grain cores</h2>
-      <div class="field">
-        <select id="orderingMode"></select>
-      </div>
-      <div class="field" id="orderingStepField" hidden>
-        <label for="orderingStep">Minimum increase per grain</label>
-        <input type="text" id="orderingStep" inputmode="decimal">
-      </div>
-      <div class="field" id="orderingGroupsField" hidden>
-        <label for="orderingGroups">Mandrel sizes</label>
-        <select id="orderingGroups"></select>
-      </div>
-    </section>
+    </div>
   </section>
 
   <section class="step" data-wstep="2" hidden>
     <header class="step-head"><h1>Constraints</h1><p>Set the limits the design must respect</p></header>
-    <section class="card">
-      <div class="card-head">
-        <h2>Design Constraints</h2>
-        <button type="button" class="link" id="btnAddConstraint">+ add</button>
+    <div class="cols split">
+      <div class="col">
+        <section class="card">
+          <div class="card-head">
+            <h2>Design Constraints</h2>
+            <button type="button" class="link" id="btnAddConstraint">+ add</button>
+          </div>
+          <div class="rows" id="constraintRows"></div>
+          <div class="dupes" id="constraintDupes"></div>
+        </section>
       </div>
-      <div class="rows" id="constraintRows"></div>
-      <div class="dupes" id="constraintDupes"></div>
-    </section>
-    <section class="card">
-      <h2 id="baselineTitle" class="plain">Loaded motor</h2>
-      <div id="baselineCheck" class="baseline-check"></div>
-      <div id="constraintCurves" class="motor-thrust tall"></div>
-      <p class="hint" id="constraintCurvesNote"></p>
-    </section>
-    <section class="card" id="sizingCard">
-      <h2>Possible configurations</h2>
-      <div class="sizing" id="sizing"></div>
-    </section>
+      <div class="col">
+        <section class="card">
+          <h2 id="baselineTitle" class="plain">Loaded motor</h2>
+          <div id="baselineCheck" class="baseline-check"></div>
+        </section>
+        <section class="card" id="sizingCard">
+          <h2>Possible configurations</h2>
+          <div class="sizing" id="sizing"></div>
+        </section>
+      </div>
+    </div>
   </section>
 
   <section class="step" data-wstep="3" hidden>
     <header class="step-head"><h1>Optimize</h1><p>Choose what to maximize, minimize, or target</p></header>
-    <section class="card">
-      <div class="card-head">
-        <h2>What to optimize</h2>
-        <button type="button" class="link" id="btnAddObjective">+ add</button>
+    <div class="cols split">
+      <div class="col">
+        <section class="card">
+          <div class="card-head">
+            <h2>What to optimize</h2>
+            <button type="button" class="link" id="btnAddObjective">+ add</button>
+          </div>
+          <div class="rows" id="objectiveRows"></div>
+        </section>
       </div>
-      <div class="rows" id="objectiveRows"></div>
-      <div class="presets">
-        <span class="label">Presets</span>
-        <button type="button" class="chip" data-preset="tradeoff">Thrust vs impulse</button>
-        <button type="button" class="chip" data-preset="thrust">Max initial thrust</button>
-        <button type="button" class="chip" data-preset="impulse">Max impulse</button>
-        <button type="button" class="chip" data-preset="flat">Flattest curve</button>
+      <div class="col">
+        <section class="card">
+          <h2>Presets</h2>
+          <div class="preset-list">
+            <button type="button" class="preset" data-preset="tradeoff">
+              <span class="name">Thrust vs impulse</span>
+              <span class="why">Two objectives, so the run returns a curve of options
+                rather than one answer.</span></button>
+            <button type="button" class="preset" data-preset="thrust">
+              <span class="name">Max initial thrust</span>
+              <span class="why">Hardest off the rail.</span></button>
+            <button type="button" class="preset" data-preset="impulse">
+              <span class="name">Max impulse</span>
+              <span class="why">The largest motor the limits allow.</span></button>
+            <button type="button" class="preset" data-preset="flat">
+              <span class="name">Flattest curve</span>
+              <span class="why">Peak thrust closest to average.</span></button>
+          </div>
+        </section>
+        <section class="card">
+          <h2>What this run will return</h2>
+          <p class="hint" id="objectiveNote"></p>
+        </section>
       </div>
-    </section>
+    </div>
   </section>
 
   <section class="step" data-wstep="4" hidden>
@@ -208,93 +253,124 @@
       </div>
       <label class="check">
         <input type="checkbox" id="expertMode">
-        <span>I know what I&rsquo;m doing <em>(unlocks the simulation budget, the
-          number of searches and the core count)</em></span>
+        <span>I know what I&rsquo;m doing <em>(unlocks these three)</em></span>
       </label>
-      <p class="hint" id="machineNote"></p>
       <p class="hint" id="budgetSplit"></p>
     </section>
 
-    <section class="card">
-      <h2>Search method</h2>
-      <label class="check">
-        <input type="checkbox" id="modePareto">
-        <span>Surrogate search <span class="beta">beta</span>
-          <em>(samples the space, trains a model on those simulations, then searches
-          the model instead of openMotor. Cheaper and faster than the full search, and
-          it maps the whole trade-off curve, but the answers come from a model and are
-          not guaranteed to be the best available. The full search runs every candidate
-          through openMotor.)</em></span>
-      </label>
-    </section>
-
-    <section class="card">
-      <h2>Before you start</h2>
-      <p class="hint">The search uses every core it is given for as long as it runs.
-        A machine that throttles or sleeps part way through takes far longer.</p>
-      <ul class="checklist" id="readyList"></ul>
-    </section>
-
-    <section class="card">
-      <h2>How long it will take</h2>
-      <p class="hint" id="diagNote"></p>
-      <div class="design-actions">
-        <button type="button" class="chip" id="btnDiagnostic">Run the diagnostic</button>
-        <span class="meta" id="diagStatus"></span>
+    <div class="cols split">
+      <div class="col">
+        <section class="card" id="readyCard">
+          <div class="card-head">
+            <h2>Get the machine ready</h2>
+            <span class="ready-count" id="readyCount"></span>
+          </div>
+          <div class="alerts" id="readyList"></div>
+        </section>
       </div>
-      <p class="estimate" id="estimate"></p>
-      <div class="problems" id="problems"></div>
-    </section>
+      <div class="col">
+        <section class="card">
+          <h2>How long it will take</h2>
+          <div class="design-actions">
+            <button type="button" class="chip" id="btnDiagnostic">Run the diagnostic</button>
+            <span class="meta" id="diagStatus"></span>
+          </div>
+          <p class="estimate" id="estimate"></p>
+          <p class="hint" id="diagNote"></p>
+        </section>
+        <section class="card">
+          <h2>Search method</h2>
+          <label class="check">
+            <input type="checkbox" id="modePareto">
+            <span>Surrogate search <span class="beta">beta</span>
+              <em>Trains a model on sampled simulations and searches that instead of
+              openMotor. Faster and cheaper, and it maps the whole trade-off curve, but
+              the answers come from a model rather than the simulator.</em></span>
+          </label>
+        </section>
+        <div class="problems" id="problems"></div>
+      </div>
+    </div>
   </section>
 
   <section class="step" data-wstep="5" hidden>
     <header class="step-head"><h1>Running</h1><p>The search, live</p></header>
-    <section class="card">
-      <div class="live" id="live" hidden>
-        <div class="live-head">
-          <div>
-            <h3 id="liveTitle">Searching</h3>
-            <p class="sub" id="liveSub">Every dot is a motor. Blue ones are legal.</p>
-          </div>
-          <div class="live-stats" id="liveStats"></div>
-        </div>
-        <div class="speed" id="speed">
-          <div class="speed-row">
-            <span class="k">Speed</span>
-            <div class="bar"><div class="fill" id="speedFill"></div></div>
-            <span class="v" id="speedNum">&mdash;</span>
-          </div>
-          <div class="speed-row">
-            <span class="k">Remaining</span>
-            <span class="eta" id="speedEta">&mdash;</span>
-          </div>
-        </div>
-        <div class="live-plot" id="livePlot"></div>
-        <div class="axis-controls" id="axisControls">
-          <span class="label">Axes</span>
-          <label id="axXlabel">x</label>
-          <input type="text" id="axXmin" inputmode="decimal" size="8">
-          <span class="to">to</span>
-          <input type="text" id="axXmax" inputmode="decimal" size="8">
-          <label id="axYlabel">y</label>
-          <input type="text" id="axYmin" inputmode="decimal" size="8">
-          <span class="to">to</span>
-          <input type="text" id="axYmax" inputmode="decimal" size="8">
-          <button type="button" class="chip" id="btnRefit">Fit to data</button>
-        </div>
-        <div class="live-foot">
-          <div class="live-spark" id="liveSpark"></div>
-          <p class="sub" id="liveNote"></p>
-        </div>
+
+    <section class="card run-bar" id="runBar" hidden>
+      <div class="run-times">
+        <div class="run-time"><span class="k">Elapsed</span><span class="v" id="runElapsed">00:00:00</span></div>
+        <div class="run-time right"><span class="k">Remaining</span><span class="v" id="runLeft">&mdash;</span></div>
       </div>
-      <div class="empty" id="emptyState">
-        <div class="empty-inner">
-          <h3>Ready to optimize</h3>
-          <p>Everything is set. Press <strong>Optimize</strong> to start the search.</p>
-          <div id="emptyPreview" class="empty-preview"></div>
-        </div>
-      </div>
+      <div class="run-track"><div class="run-fill" id="runFill"></div></div>
+      <div class="run-foot"><span id="runStage">Starting</span><span id="runCount"></span></div>
     </section>
+
+    <div class="live" id="live" hidden>
+      <div class="cols run-split">
+        <div class="col">
+          <section class="card">
+            <div class="live-head">
+              <div>
+                <h3 id="liveTitle">Searching</h3>
+                <p class="sub" id="liveSub">Every dot is a motor. Blue ones are legal.</p>
+              </div>
+              <div class="live-stats" id="liveStats"></div>
+            </div>
+            <div class="plot-frame">
+              <div class="stretch stretch-y" id="stretchY">
+                <button type="button" class="ico" data-axis="y" data-factor="0.8"
+                  title="Zoom the vertical axis in">&#9650;</button>
+                <button type="button" class="ico" data-axis="y" data-factor="1.25"
+                  title="Zoom the vertical axis out">&#9660;</button>
+              </div>
+              <div class="live-plot" id="livePlot"></div>
+              <div class="stretch stretch-x" id="stretchX">
+                <button type="button" class="ico" data-axis="x" data-factor="1.25"
+                  title="Zoom the horizontal axis out">&#9664;</button>
+                <button type="button" class="ico" id="btnRefit"
+                  title="Fit both axes to the data">&#9678;</button>
+                <button type="button" class="ico" data-axis="x" data-factor="0.8"
+                  title="Zoom the horizontal axis in">&#9654;</button>
+              </div>
+            </div>
+            <p class="sub drag-hint">Drag to pan, scroll to zoom, or use the arrows.</p>
+          </section>
+          <section class="card">
+            <h2>Best so far</h2>
+            <div class="live-spark" id="liveSpark"></div>
+            <p class="sub" id="liveNote"></p>
+          </section>
+        </div>
+
+        <div class="col">
+          <section class="card gauge-card">
+            <h2>Speed</h2>
+            <div class="gauge" id="speedGauge"></div>
+            <p class="sub" id="speedNote"></p>
+          </section>
+          <section class="card">
+            <h2>Population spread</h2>
+            <p class="sub">Where this generation sits. A spread means it is still
+              exploring; a spike means it has settled.</p>
+            <div class="side-plot" id="livePlotSpread"></div>
+          </section>
+          <section class="card">
+            <h2>Population health</h2>
+            <p class="sub">How much of each generation is legal, and how many designs
+              the front is carrying.</p>
+            <div class="side-plot" id="livePlotHealth"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div class="empty" id="emptyState">
+      <div class="empty-inner">
+        <h3>Ready to optimize</h3>
+        <p>Everything is set. Press <strong>Optimize</strong> to start the search.</p>
+        <div id="emptyPreview" class="empty-preview"></div>
+      </div>
+    </div>
   </section>
 
   <section class="step" data-wstep="6" hidden>

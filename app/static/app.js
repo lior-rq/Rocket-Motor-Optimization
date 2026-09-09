@@ -17,7 +17,8 @@ const App = (() => {
     profile: 'design', selected: 0, baselineCurves: null, reportJob: null,
     step: 0, reached: 0, validation: { problems: [] },
     ready: {}, diagnostic: null, diagRunning: false,
-    liveRange: null, liveSnap: null, rate: null
+    battery: null, wakeLock: null,
+    liveRange: null, liveSnap: null, liveHistory: [], runStart: 0
   };
 
   /* ------------------------------------------------------------- numbers */
@@ -77,6 +78,7 @@ const App = (() => {
 
   async function boot() {
     wireChrome();
+    readBattery();
     wireWizard();
     await loadDefaults();
     // A finished run can be reopened by its id, which makes a result something
@@ -120,6 +122,7 @@ const App = (() => {
     renderHardware();
     renderConfig();
     renderEmptyPreview();
+    renderMotorPreview();
     validate();
   }
 
@@ -143,10 +146,12 @@ const App = (() => {
     $('#btnRun').addEventListener('click', startRun);
     $('#btnHardware').addEventListener('click', applyHardware);
     $('#btnHardwareReset').addEventListener('click', resetHardware);
-    $('#btnRefit').addEventListener('click', () => {
-      state.liveRange = state.liveSnap ? fitRange(state.liveSnap) : null;
-      redrawLive();
-    });
+    $('#btnRefit').addEventListener('click', () =>
+      Charts.fitAxes($('#livePlot'),
+                     state.liveSnap ? fitRange(state.liveSnap) : state.liveRange));
+    document.querySelectorAll('.stretch [data-axis]').forEach(b =>
+      b.addEventListener('click', () => Charts.stretchAxis(
+        $('#livePlot'), b.dataset.axis, Number(b.dataset.factor))));
     $('#btnReportOpen').addEventListener('click', openReport);
     $('#btnBundle').addEventListener('click', downloadBundle);
     $('#btnCancel').addEventListener('click', cancelRun);
@@ -277,7 +282,30 @@ const App = (() => {
     renderTolerances(); renderOrdering(); renderEffort();
   }
 
+  function renderFreeSummary() {
+    const host = $('#freeSummary');
+    if (!host) return;
+    const vars = state.spec.variables || [];
+    const free = vars.filter(v => v.free);
+    const steps = [...new Set(free.map(v => v.step || 0))];
+    host.innerHTML = `
+      <div class="big"><span class="n">${free.length}</span>
+        <span class="of">of ${vars.length} free</span></div>
+      <div class="free-rows">${vars.map(v => `
+        <div class="free-row ${v.free ? '' : 'held'}">
+          <span class="k">${v.label || v.name}</span>
+          <span class="v">${v.free
+            ? fmtLen(v.low) + ' \u2013 ' + fmtLen(v.high)
+            : 'held at ' + fmtLen(v.fixed_value || 0)}</span>
+        </div>`).join('')}</div>
+      <p class="hint">${steps.length === 1
+        ? 'Every free dimension is on a ' +
+          (steps[0] ? fmtLen(steps[0]) : 'continuous') + ' grid.'
+        : 'Mixed machining grids across the free dimensions.'}</p>`;
+  }
+
   function renderVariables() {
+    renderFreeSummary();
     const body = $('#varRows');
     body.innerHTML = '';
     state.spec.variables.forEach((v, i) => {
@@ -354,6 +382,22 @@ const App = (() => {
         state.spec.objectives.splice(Number(b.dataset.del), 1);
         renderObjectives(); validate();
       }));
+    renderObjectiveNote();
+  }
+
+  function renderObjectiveNote() {
+    const host = $('#objectiveNote');
+    if (!host) return;
+    const on = (state.spec.objectives || []).filter(o => o.enabled);
+    const names = on.map(o => Charts.metricLabel(o.metric).toLowerCase());
+    host.innerHTML = !on.length
+      ? 'Nothing is selected yet.'
+      : on.length === 1
+        ? `One objective, so the run returns a single best motor for
+           <strong>${names[0]}</strong>.`
+        : `${on.length} objectives, so the run returns a curve of options trading
+           <strong>${names.join('</strong> against <strong>')}</strong>. Every design
+           on it is buildable; choosing between them is the point.`;
   }
 
   function renderConstraints() {
@@ -401,7 +445,6 @@ const App = (() => {
       }));
     renderDupes();
     renderBaselineCheck();
-    renderConstraintCurves();
   }
 
   // Two limits on one metric are not an error, but only the tighter one binds,
@@ -447,33 +490,6 @@ const App = (() => {
            (unit ? ' ' + unit : '');
   }
 
-  //: Thrust always, plus one row for every enabled limit that is a time series.
-  const CONSTRAINT_ROWS = {
-    max_pressure: 'pressure', avg_pressure: 'pressure',
-    peak_kn: 'kn', peak_mass_flux: 'mass_flux'
-  };
-
-  function renderConstraintCurves() {
-    const host = $('#constraintCurves'), note = $('#constraintCurvesNote');
-    if (!host) return;
-    const c = state.baselineCurves;
-    if (!c || !c.time) { host.innerHTML = ''; if (note) note.textContent = ''; return; }
-    const limits = (state.spec.constraints || []).filter(x => x.enabled);
-    const rows = ['thrust'];
-    limits.forEach(x => {
-      const row = CONSTRAINT_ROWS[x.metric];
-      if (row && rows.indexOf(row) < 0) rows.push(row);
-    });
-    Charts.behaviourStack(host, c, limits, rows);
-    const flat = limits.filter(x => !CONSTRAINT_ROWS[x.metric])
-                       .map(x => Charts.metricLabel(x.metric));
-    if (note) note.innerHTML = flat.length
-      ? `Dotted lines are the limits. ${flat.join(' and ')} ${
-          flat.length > 1 ? 'are' : 'is'} a single number rather than a curve, so
-         ${flat.length > 1 ? 'they are' : 'it is'} in the table above instead.`
-      : 'Dotted lines are the limits.';
-  }
-
   function renderTolerances() {
     const host = $('#toleranceRows');
     if (!host) return;
@@ -517,11 +533,25 @@ const App = (() => {
     renderPanels();
   }
 
+  //: What each rule costs or buys, since the choice moves the result by more
+  //: than most of the bounds do.
+  const ORDERING_WHY = {
+    none: 'No rule. Tends to choke the aft grain, and rules out nothing.',
+    nondecreasing: 'The default. Keeps the aft port open without forcing six '
+      + 'different mandrels.',
+    strict: 'Every core wider than the one ahead. Costs roughly 0.8% of thrust '
+      + 'against allowing ties.',
+    paired: 'A few sizes shared across the grains. Fewer mandrels to buy or turn.'
+  };
+
   function renderOrdering() {
     const sel = $('#orderingMode');
     sel.innerHTML = Object.entries(state.orderingModes).map(([k, label]) =>
       `<option value="${k}" ${state.spec.ordering.mode === k ? 'selected' : ''}>${label}</option>`).join('');
     sel.onchange = () => { state.spec.ordering.mode = sel.value; renderOrdering(); validate(); };
+
+    const note = $('#orderingNote');
+    if (note) note.textContent = ORDERING_WHY[state.spec.ordering.mode] || '';
 
     const stepField = $('#orderingStepField');
     stepField.hidden = state.spec.ordering.mode !== 'strict';
@@ -658,13 +688,6 @@ const App = (() => {
       spec.mode = pareto.checked ? 'pareto' : 'fast'; validate();
     };
 
-    $('#machineNote').innerHTML = machine.performance_cores
-      ? `This machine reports <strong>${cores}</strong> cores, of which
-         <strong>${machine.performance_cores}</strong> are performance cores.
-         Automatic uses those and leaves the efficiency cores alone: the slowest
-         worker sets the pace, so adding them makes a run longer, not shorter.`
-      : `This machine reports <strong>${cores}</strong> cores. Automatic leaves two
-         alone so the computer stays usable.`;
     renderReadyList();
     renderDiagnostic();
   }
@@ -676,54 +699,109 @@ const App = (() => {
     return { pop, gen: Math.max(Math.floor(perSeed / pop), 2), perSeed };
   }
 
-  //: Everything that costs real time and is outside this program's control.
-  const READY_STEPS = {
-    mac: [
-      'Plug in the power adapter. On battery, macOS caps sustained CPU speed.',
-      'System Settings → Battery → Energy Mode: High Power, if the machine offers it.',
-      'System Settings → Lock Screen: stop the display sleeping, or run the search with the lid open.',
-      'Quit anything else that uses the CPU hard. Browsers with many tabs count.'
-    ],
-    windows: [
-      'Plug in the power adapter. On battery, Windows caps sustained CPU speed.',
-      'Settings → System → Power &amp; battery → Power mode: Best performance.',
-      'Settings → System → Power &amp; battery → Screen and sleep: set sleep to Never.',
-      'Quit anything else that uses the CPU hard. Browsers with many tabs count.'
-    ],
-    linux: [
-      'Plug in the power adapter.',
-      'Set the CPU governor or power profile to performance.',
-      'Disable suspend for the length of the run.',
-      'Quit anything else that uses the CPU hard.'
-    ]
-  };
+  //: What the machine has to be for the run not to take far longer than it
+  //: should. `check` returns true when it already is, or null when the browser
+  //: cannot tell and only the user can say.
+  const READY_CHECKS = [
+    {
+      id: 'power', icon: '\u26a1', title: 'Plug in the power adapter',
+      why: () => 'On battery the processor is capped and the search takes far longer.',
+      done: () => state.battery && state.battery.supported
+        ? 'Running on mains power.' : 'Confirmed.',
+      action: 'Done',
+      check: () => (state.battery && state.battery.supported && state.battery.charging)
+        || state.ready.power || null
+    },
+    {
+      id: 'awake', icon: '\u25d1', title: 'Stop the machine sleeping',
+      why: () => 'A search interrupted part way through has to start again.',
+      done: () => 'This page is holding the screen awake.',
+      action: navigator.wakeLock ? 'Keep awake' : 'Done',
+      run: navigator.wakeLock ? requestWakeLock : null,
+      check: () => (state.wakeLock ? true : null) || state.ready.awake || null
+    },
+    {
+      id: 'power-mode', icon: '\u2699', title: 'Set the power mode to performance',
+      why: powerModeHint, done: () => 'Set.', action: 'Done',
+      check: () => state.ready['power-mode'] || null
+    },
+    {
+      id: 'quiet', icon: '\u25a3', title: 'Close anything else using the processor',
+      why: () => 'Every core the search does not get is a core it waits on.',
+      done: () => 'Done.', action: 'Done',
+      check: () => state.ready.quiet || null
+    }
+  ];
+
+  function powerModeHint() {
+    const p = (state.machine || {}).platform;
+    if (p === 'mac') return 'System Settings \u2192 Battery \u2192 Energy Mode: High Power.';
+    if (p === 'windows') return 'Settings \u2192 System \u2192 Power & battery \u2192 Best performance.';
+    return 'Set the CPU governor or power profile to performance.';
+  }
+
+  async function readBattery() {
+    if (!navigator.getBattery) { state.battery = { supported: false }; return; }
+    try {
+      const b = await navigator.getBattery();
+      const sync = () => {
+        state.battery = { supported: true, charging: b.charging };
+        renderReadyList();
+      };
+      b.addEventListener('chargingchange', sync);
+      sync();
+    } catch (err) { state.battery = { supported: false }; }
+  }
+
+  async function requestWakeLock() {
+    try {
+      state.wakeLock = await navigator.wakeLock.request('screen');
+      // The browser drops the lock whenever the tab goes to the background.
+      state.wakeLock.addEventListener('release', () => {
+        state.wakeLock = null; renderReadyList();
+      });
+    } catch (err) { state.wakeLock = null; toast('This browser will not hold the screen awake.'); }
+    renderReadyList();
+  }
 
   function renderReadyList() {
     const host = $('#readyList');
     if (!host) return;
-    const steps = READY_STEPS[(state.machine || {}).platform] || READY_STEPS.linux;
-    host.innerHTML = steps.map((text, i) =>
-      `<li><label><input type="checkbox" data-ready="${i}"
-        ${state.ready[i] ? 'checked' : ''}><span>${text}</span></label></li>`).join('');
-    host.querySelectorAll('[data-ready]').forEach(box =>
-      box.addEventListener('change', () => {
-        state.ready[Number(box.dataset.ready)] = box.checked;
+    let outstanding = 0;
+    host.innerHTML = READY_CHECKS.map(item => {
+      const ok = item.check();
+      if (!ok) outstanding++;
+      const button = (!ok && item.action)
+        ? `<button type="button" class="chip" data-ready="${item.id}">${item.action}</button>` : '';
+      return `<div class="alert ${ok ? 'ok' : 'warn'}">
+        <span class="ico">${ok ? '\u2713' : item.icon}</span>
+        <span class="body"><span class="title">${item.title}</span>
+        <span class="why">${ok ? item.done() : item.why()}</span></span>${button}</div>`;
+    }).join('');
+    host.querySelectorAll('[data-ready]').forEach(b =>
+      b.addEventListener('click', () => {
+        const item = READY_CHECKS.find(i => i.id === b.dataset.ready);
+        if (item && item.run) { item.run(); return; }
+        state.ready[b.dataset.ready] = true;
+        renderReadyList();
       }));
+    const count = $('#readyCount');
+    if (count) {
+      count.textContent = outstanding ? outstanding + ' to do' : 'ready';
+      count.className = 'ready-count ' + (outstanding ? 'warn' : 'ok');
+    }
+    const card = $('#readyCard');
+    if (card) card.classList.toggle('has-warning', outstanding > 0);
   }
 
   function renderDiagnostic() {
     const note = $('#diagNote'), status = $('#diagStatus'), btn = $('#btnDiagnostic');
     if (!btn) return;
     const d = state.diagnostic;
-    note.innerHTML = d
-      ? `Measured <strong>${d.rate}</strong> simulations a second on
-         <strong>${d.workers}</strong> cores, at the settings above. The estimate
-         adds ${Math.round((d.thermal_derate - 1) * 100)}% for the machine slowing
-         down as it heats up.`
-      : `Time estimates need a measurement from this machine at these settings.
-         The diagnostic runs real simulations for about a minute and does not
-         change anything.`;
-    status.textContent = state.diagRunning ? 'measuring…' : '';
+    note.textContent = d
+      ? 'Measured ' + d.rate + ' simulations a second on ' + d.workers + ' cores.'
+      : 'A time estimate needs a measurement from this machine. Takes about a minute.';
+    status.textContent = state.diagRunning ? 'measuring\u2026' : '';
     btn.disabled = !!state.diagRunning;
     btn.textContent = d ? 'Measure again' : 'Run the diagnostic';
     btn.onclick = runDiagnostic;
@@ -800,7 +878,6 @@ const App = (() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
     // Plotly cannot size a hidden container, so these draw on arrival.
     if (state.step === 0) renderMotorPreview();
-    if (state.step === 2) renderConstraintCurves();
     if (state.step === RUNNING) redrawLive();
   }
 
@@ -816,8 +893,9 @@ const App = (() => {
     if (crumb) crumb.textContent = 'Step ' + (state.step + 1) + ' of ' + STEPS;
     const back = $('#btnBack'), next = $('#btnNext'), gate = $('#stepGate');
     if (!back || !next || !gate) return;
-    back.disabled = state.step === 0;
     const last = state.step === STEPS - 1;
+    back.hidden = last;                 // nothing to return to once it has run
+    back.disabled = state.step === 0;
     next.hidden = last;
     next.textContent = state.step === SETTINGS ? 'Optimize' : 'Next';
     next.disabled = !stepDone(state.step);
@@ -923,11 +1001,8 @@ const App = (() => {
       renderSizing(data.sizing);
       const est = data.estimate || {};
       $('#budgetSplit').innerHTML = est.seeds
-        ? `Split into <strong>${est.seeds}</strong> independent search${
-            est.seeds === 1 ? '' : 'es'} of ${est.pop} × ${est.gen} =
-           ${est.per_seed.toLocaleString()} simulations each, then merged into one
-           front. Independent searches disagree by several percent, so merging
-           several beats one long run at the same cost.`
+        ? `<strong>${est.seeds}</strong> search${est.seeds === 1 ? '' : 'es'} of
+           ${est.pop} × ${est.gen}, merged into one front.`
         : '';
       // Predictions and burns cost wildly different amounts; quoting one
       // total made a surrogate run look an hour long when it takes minutes.
@@ -1058,7 +1133,10 @@ const App = (() => {
     // Hand the workspace over to the live view for the duration.
     Charts.resetLive();
     state.results = null;
-    state.liveRange = null; state.liveSnap = null;
+    state.liveRange = null; state.liveSnap = null; state.liveHistory = [];
+    state.runStart = Date.now();
+    $('#runBar').hidden = false;
+    $('#runFill').style.width = '0%';
     $('#emptyState').hidden = true;
     $('#panels').hidden = true;
     $('#live').hidden = false;
@@ -1074,6 +1152,7 @@ const App = (() => {
     if (!res.ok) return;
     const job = await res.json();
     if (job.telemetry) renderLive(job.telemetry);
+    renderRunBar(job);
     $('#progressFill').style.width = (job.fraction * 100).toFixed(1) + '%';
     $('#progressMsg').textContent = job.message + '  ·  ' + job.elapsed + 's';
     if (job.status === 'done') {
@@ -1130,15 +1209,29 @@ const App = (() => {
     }
     state.liveSnap = t;
     if (!state.liveRange) state.liveRange = fitRange(t);
+    recordHistory(t);
     try { Charts.liveFrame($('#livePlot'), t, state.liveRange); }
     catch (e) { console.error(e); }
+    try { Charts.liveSpread($('#livePlotSpread'), t); } catch (e) { console.error(e); }
+    try { Charts.liveHealth($('#livePlotHealth'), state.liveHistory); } catch (e) { console.error(e); }
     try { Charts.liveSpark($('#liveSpark'), t.trace); } catch (e) { console.error(e); }
-    renderAxisControls();
     renderSpeed(t);
     $('#liveNote').textContent = t.trace && t.trace.length > 1
-      ? 'Best ' + Charts.metricLabel(t.metrics[1]).toLowerCase() + ' found so far, '
-        + 'across every generation of this run.'
+      ? 'Best ' + Charts.metricLabel(t.metrics[1]).toLowerCase() + ' found so far.'
       : '';
+  }
+
+  //: One row per generation for the health chart. Keyed, because a snapshot
+  //: can be polled more than once before the next generation lands.
+  function recordHistory(t) {
+    const key = (t.seed_index || 0) + ':' + (t.generation || 0);
+    const last = state.liveHistory[state.liveHistory.length - 1];
+    if (last && last.key === key) return;
+    state.liveHistory.push({
+      key, gen: t.generation || 0, seed: t.seed_index || 0,
+      feasible: t.feasible_fraction || 0, front: (t.front || []).length
+    });
+    if (state.liveHistory.length > 400) state.liveHistory.shift();
   }
 
   function redrawLive() {
@@ -1147,15 +1240,13 @@ const App = (() => {
 
   //: Everything drawn, plus a tenth of the span so nothing sits on the frame.
   function fitRange(t) {
-    const [ax, ay] = Charts.orderAxes(t.metrics || ['initial_thrust', 'total_impulse']);
+    const [ax] = Charts.orderAxes(t.metrics || ['initial_thrust', 'total_impulse']);
     const flip = ax !== (t.metrics || [])[0];
     const xs = [], ys = [];
-    (t.points || []).forEach(p => { xs.push(flip ? p[1] : p[0]); ys.push(flip ? p[0] : p[1]); });
-    (t.front || []).forEach(p => { xs.push(flip ? p[1] : p[0]); ys.push(flip ? p[0] : p[1]); });
-    if (t.baseline) {
-      xs.push(flip ? t.baseline[1] : t.baseline[0]);
-      ys.push(flip ? t.baseline[0] : t.baseline[1]);
-    }
+    const add = p => { xs.push(flip ? p[1] : p[0]); ys.push(flip ? p[0] : p[1]); };
+    (t.points || []).forEach(add);
+    (t.front || []).forEach(add);
+    if (t.baseline) add(t.baseline);
     if (!xs.length) return null;
     const span = v => {
       const lo = Math.min.apply(null, v), hi = Math.max.apply(null, v);
@@ -1165,37 +1256,33 @@ const App = (() => {
     return { x: span(xs), y: span(ys) };
   }
 
-  function renderAxisControls() {
-    const t = state.liveSnap, r = state.liveRange;
-    if (!t || !r) return;
-    const [ax, ay] = Charts.orderAxes(t.metrics || []);
-    $('#axXlabel').textContent = Charts.metricLabel(ax);
-    $('#axYlabel').textContent = Charts.metricLabel(ay);
-    const boxes = [['#axXmin', 'x', 0], ['#axXmax', 'x', 1],
-                   ['#axYmin', 'y', 0], ['#axYmax', 'y', 1]];
-    boxes.forEach(([sel, axis, i]) => {
-      const box = $(sel);
-      if (document.activeElement === box) return;   // never fight the typist
-      box.value = Math.round(r[axis][i]).toLocaleString();
-      box.onchange = () => {
-        const n = parseNumber(box.value);
-        if (!isNaN(n)) { r[axis][i] = n; redrawLive(); }
-      };
-    });
-  }
-
   function renderSpeed(t) {
-    const done = t.simulations_done || 0, total = t.simulations_total || 0;
     const rate = t.rate || 0;
     const ceiling = Math.max((state.diagnostic || {}).rate || 0,
-                             (state.machine || {}).rate || 0, rate, 1);
-    $('#speedNum').textContent = rate
-      ? rate.toFixed(1) + ' sims/s' + (t.workers ? ' on ' + t.workers + ' cores' : '')
-      : '—';
-    $('#speedFill').style.width = Math.min(100, 100 * rate / ceiling) + '%';
-    const left = rate > 0 && total > done ? (total - done) / rate : null;
-    $('#speedEta').textContent = left === null ? '—'
+                             (state.machine || {}).rate || 0, rate, 1) * 1.15;
+    try { Charts.speedometer($('#speedGauge'), rate, ceiling, 'sims / second'); }
+    catch (e) { console.error(e); }
+    $('#speedNote').textContent = t.workers ? 'Across ' + t.workers + ' cores.' : '';
+  }
+
+  //: Elapsed against what is left, from the run's own measured throughput
+  //: rather than the optimiser's stage fractions, which jump.
+  function renderRunBar(job) {
+    const bar = $('#runBar');
+    if (!bar) return;
+    bar.hidden = false;
+    const t = job.telemetry || {};
+    const done = t.simulations_done || 0, total = t.simulations_total || 0;
+    const frac = total ? Math.min(done / total, 1) : (job.fraction || 0);
+    $('#runElapsed').textContent = fmtClock(job.elapsed || 0);
+    const left = t.rate > 0 && total > done ? (total - done) / t.rate : null;
+    $('#runLeft').textContent = left === null ? '\u2014'
       : fmtClock(left * ((state.diagnostic || {}).thermal_derate || 1));
+    $('#runFill').style.width =
+      (Math.max(frac, job.fraction || 0) * 100).toFixed(1) + '%';
+    $('#runStage').textContent = job.message || '';
+    $('#runCount').textContent = total
+      ? done.toLocaleString() + ' / ' + total.toLocaleString() + ' simulations' : '';
   }
 
   function finishRun() {
