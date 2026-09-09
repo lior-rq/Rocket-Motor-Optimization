@@ -17,8 +17,8 @@ const App = (() => {
     profile: 'design', selected: 0, baselineCurves: null, reportJob: null,
     step: 0, reached: 0, validation: { problems: [] },
     ready: {}, diagnostic: null, diagRunning: false,
-    battery: null, wakeLock: null,
-    liveRange: null, liveSnap: null, liveHistory: [], runStart: 0
+    battery: null, batteryHandle: null, wakeLock: null, presetSeconds: null,
+    liveRange: null, liveSnap: null, runStart: 0
   };
 
   /* ------------------------------------------------------------- numbers */
@@ -123,6 +123,7 @@ const App = (() => {
     renderConfig();
     renderEmptyPreview();
     renderMotorPreview();
+    renderBaselineBoxes();
     validate();
   }
 
@@ -149,13 +150,12 @@ const App = (() => {
     $('#btnRefit').addEventListener('click', () =>
       Charts.fitAxes($('#livePlot'),
                      state.liveSnap ? fitRange(state.liveSnap) : state.liveRange));
-    document.querySelectorAll('.stretch [data-axis]').forEach(b =>
-      b.addEventListener('click', () => Charts.stretchAxis(
-        $('#livePlot'), b.dataset.axis, Number(b.dataset.factor))));
     $('#btnReportOpen').addEventListener('click', openReport);
     $('#btnBundle').addEventListener('click', downloadBundle);
     $('#btnCancel').addEventListener('click', cancelRun);
     $('#btnLoad').addEventListener('click', () => $('#fileInput').click());
+    on('#btnLoadBaseline', 'click', () => $('#fileInput').click());
+    on('#btnLoadedExport', 'click', () => exportDesign(state.selected));
     $('#fileInput').addEventListener('change', onFilePicked);
     $('#btnAddObjective').addEventListener('click', () => {
       state.spec.objectives.push({ metric: 'total_impulse', direction: 'max',
@@ -609,7 +609,10 @@ const App = (() => {
           <span class="figs">${v.budget.toLocaleString()} simulations &middot;
             ${v.seeds} search${v.seeds === 1 ? '' : 'es'}</span>
           <span class="figs dim">${b.pop} &times; ${b.gen} each</span>
-          <span class="time">~${Math.round(v.seconds / 60)} min</span>
+          <span class="time ${state.presetSeconds ? 'measured' : ''}">${
+            state.presetSeconds && state.presetSeconds[k]
+              ? fmtDuration(state.presetSeconds[k])
+              : '~' + Math.round(v.seconds / 60) + ' min'}</span>
         </button>`;
       }).join('');
     seg.querySelectorAll('button').forEach(b =>
@@ -700,57 +703,78 @@ const App = (() => {
   }
 
   //: What the machine has to be for the run not to take far longer than it
-  //: should. `check` returns true when it already is, or null when the browser
-  //: cannot tell and only the user can say.
+  //: should. `check` returns true when it already is, or null when it is not.
+  //: `sensed` says whether the browser can see the answer or only the user can,
+  //: because a list that mixes the two without saying so reads as generic.
   const READY_CHECKS = [
     {
-      id: 'power', icon: '\u26a1', title: 'Plug in the power adapter',
-      why: () => 'On battery the processor is capped and the search takes far longer.',
+      id: 'power', icon: '\u26a1', title: 'Power adapter',
+      sensed: () => !!(state.battery && state.battery.supported),
+      warn: () => 'Running on battery. The processor is capped, so the search '
+        + 'will take far longer.',
       done: () => state.battery && state.battery.supported
-        ? 'Running on mains power.' : 'Confirmed.',
-      action: 'Done',
+        ? 'Plugged in.' : 'Confirmed by you.',
+      action: 'I plugged it in',
       check: () => (state.battery && state.battery.supported && state.battery.charging)
-        || state.ready.power || null
+        || (!(state.battery && state.battery.supported) && state.ready.power) || null
     },
     {
-      id: 'awake', icon: '\u25d1', title: 'Stop the machine sleeping',
-      why: () => 'A search interrupted part way through has to start again.',
-      done: () => 'This page is holding the screen awake.',
-      action: navigator.wakeLock ? 'Keep awake' : 'Done',
+      id: 'awake', icon: '\u25d1', title: 'Sleep during the run',
+      sensed: () => !!navigator.wakeLock,
+      warn: () => navigator.wakeLock
+        ? 'Nothing is stopping the screen sleeping. A search interrupted part '
+          + 'way through has to start again.'
+        : 'This browser cannot hold the screen awake. Turn sleep off yourself.',
+      done: () => state.wakeLock ? 'This page is holding the screen awake.'
+                                 : 'Confirmed by you.',
+      action: navigator.wakeLock ? 'Keep awake' : 'I turned sleep off',
       run: navigator.wakeLock ? requestWakeLock : null,
       check: () => (state.wakeLock ? true : null) || state.ready.awake || null
     },
     {
-      id: 'power-mode', icon: '\u2699', title: 'Set the power mode to performance',
-      why: powerModeHint, done: () => 'Set.', action: 'Done',
+      id: 'power-mode', icon: '\u2699', title: 'Power mode',
+      sensed: () => false,
+      warn: powerModeHint, done: () => 'Confirmed by you.',
+      action: 'I set it',
       check: () => state.ready['power-mode'] || null
-    },
-    {
-      id: 'quiet', icon: '\u25a3', title: 'Close anything else using the processor',
-      why: () => 'Every core the search does not get is a core it waits on.',
-      done: () => 'Done.', action: 'Done',
-      check: () => state.ready.quiet || null
     }
   ];
 
   function powerModeHint() {
     const p = (state.machine || {}).platform;
-    if (p === 'mac') return 'System Settings \u2192 Battery \u2192 Energy Mode: High Power.';
-    if (p === 'windows') return 'Settings \u2192 System \u2192 Power & battery \u2192 Best performance.';
-    return 'Set the CPU governor or power profile to performance.';
+    if (p === 'mac') return 'Set System Settings \u2192 Battery \u2192 Energy Mode '
+      + 'to High Power. No browser can read this setting, so it needs confirming.';
+    if (p === 'windows') return 'Set Settings \u2192 System \u2192 Power & battery '
+      + '\u2192 Power mode to Best performance. No browser can read this setting, '
+      + 'so it needs confirming.';
+    return 'Set the CPU governor or power profile to performance. No browser can '
+      + 'read this setting, so it needs confirming.';
   }
 
   async function readBattery() {
     if (!navigator.getBattery) { state.battery = { supported: false }; return; }
     try {
       const b = await navigator.getBattery();
+      state.batteryHandle = b;
       const sync = () => {
-        state.battery = { supported: true, charging: b.charging };
+        state.battery = { supported: true, charging: b.charging, level: b.level };
         renderReadyList();
       };
       b.addEventListener('chargingchange', sync);
+      b.addEventListener('levelchange', sync);
       sync();
     } catch (err) { state.battery = { supported: false }; }
+  }
+
+  //: chargingchange does not always fire in every browser, so arriving on the
+  //: settings step re-reads rather than trusting the last event.
+  function recheckMachine() {
+    const b = state.batteryHandle;
+    if (b) {
+      state.battery = { supported: true, charging: b.charging, level: b.level };
+    }
+    if (state.wakeLock && state.wakeLock.released) state.wakeLock = null;
+    renderReadyList();
   }
 
   async function requestWakeLock() {
@@ -760,7 +784,10 @@ const App = (() => {
       state.wakeLock.addEventListener('release', () => {
         state.wakeLock = null; renderReadyList();
       });
-    } catch (err) { state.wakeLock = null; toast('This browser will not hold the screen awake.'); }
+    } catch (err) {
+      state.wakeLock = null;
+      toast('This browser will not hold the screen awake.');
+    }
     renderReadyList();
   }
 
@@ -770,13 +797,18 @@ const App = (() => {
     let outstanding = 0;
     host.innerHTML = READY_CHECKS.map(item => {
       const ok = item.check();
+      const sensed = item.sensed();
       if (!ok) outstanding++;
       const button = (!ok && item.action)
         ? `<button type="button" class="chip" data-ready="${item.id}">${item.action}</button>` : '';
       return `<div class="alert ${ok ? 'ok' : 'warn'}">
         <span class="ico">${ok ? '\u2713' : item.icon}</span>
-        <span class="body"><span class="title">${item.title}</span>
-        <span class="why">${ok ? item.done() : item.why()}</span></span>${button}</div>`;
+        <span class="body">
+          <span class="title">${item.title}
+            <span class="src ${sensed ? 'auto' : 'manual'}">${
+              sensed ? 'detected' : 'cannot be detected'}</span></span>
+          <span class="why">${ok ? item.done() : item.warn()}</span></span>
+        ${button}</div>`;
     }).join('');
     host.querySelectorAll('[data-ready]').forEach(b =>
       b.addEventListener('click', () => {
@@ -879,6 +911,17 @@ const App = (() => {
     // Plotly cannot size a hidden container, so these draw on arrival.
     if (state.step === 0) renderMotorPreview();
     if (state.step === RUNNING) redrawLive();
+    if (state.step === SETTINGS) recheckMachine();
+    resizePlots();
+  }
+
+  //: Anything drawn while its section was hidden kept a default size. One
+  //: sweep after the step is visible puts every chart back on its container.
+  function resizePlots() {
+    requestAnimationFrame(() => {
+      document.querySelectorAll('.step:not([hidden]) .js-plotly-plot')
+        .forEach(node => { try { Plotly.Plots.resize(node); } catch (e) {} });
+    });
   }
 
   function renderStepper() {
@@ -939,6 +982,34 @@ const App = (() => {
       tab.addEventListener('click', () => goTo(Number(tab.dataset.wstep))));
   }
 
+  //: Named in one place, since the motor page, the results page and the
+  //: constraint check all refer to the same file.
+  function renderBaselineBoxes() {
+    const m = state.motor;
+    const name = (m && m.name) || 'no motor loaded';
+    const set = (sel, text) => { const e = $(sel); if (e) e.textContent = text; };
+    set('#baselineName', name);
+    set('#resultBaselineName', name);
+    set('#resultBaselineFigs', m
+      ? Math.round(m.initial_thrust).toLocaleString() + ' N  \u00b7  '
+        + Math.round(m.total_impulse).toLocaleString() + ' N\u00b7s' : '');
+  }
+
+  //: The design being reviewed, shown beside the baseline it is measured
+  //: against, with the .ric for it a click away.
+  function renderLoadedBox() {
+    const box = $('#loadedBox');
+    if (!box) return;
+    const d = ((state.results || {}).designs || [])[state.selected];
+    box.hidden = !d;
+    if (!d) return;
+    $('#loadedName').textContent =
+      'Option ' + (state.selected + 1) + (d.designation ? '  \u00b7  ' + d.designation : '');
+    $('#loadedFigs').textContent =
+      Math.round(d.initial_thrust).toLocaleString() + ' N  \u00b7  '
+      + Math.round(d.total_impulse).toLocaleString() + ' N\u00b7s';
+  }
+
   function renderMotorPreview() {
     if (!state.motor || !$('#motorPreview')) return;
     const b = Object.assign({}, state.motor, { curves: state.baselineCurves });
@@ -997,8 +1068,13 @@ const App = (() => {
         (data.problems || []).map(p => `<div class="problem err">${p}</div>`).join('') +
         (data.notes || []).map(p => `<div class="problem note">${p}</div>`).join('');
       state.validation = data;
+      // Only once measured: before that the preset's own nominal figure is
+      // closer to the truth than a rate this machine has never run.
+      state.presetSeconds = (data.estimate || {}).measured
+        ? data.preset_seconds || null : null;
       renderStepper();
       renderSizing(data.sizing);
+      if (state.step === SETTINGS) renderEffort();
       const est = data.estimate || {};
       $('#budgetSplit').innerHTML = est.seeds
         ? `<strong>${est.seeds}</strong> search${est.seeds === 1 ? '' : 'es'} of
@@ -1133,7 +1209,7 @@ const App = (() => {
     // Hand the workspace over to the live view for the duration.
     Charts.resetLive();
     state.results = null;
-    state.liveRange = null; state.liveSnap = null; state.liveHistory = [];
+    state.liveRange = null; state.liveSnap = null;
     state.runStart = Date.now();
     $('#runBar').hidden = false;
     $('#runFill').style.width = '0%';
@@ -1209,29 +1285,14 @@ const App = (() => {
     }
     state.liveSnap = t;
     if (!state.liveRange) state.liveRange = fitRange(t);
-    recordHistory(t);
     try { Charts.liveFrame($('#livePlot'), t, state.liveRange); }
     catch (e) { console.error(e); }
-    try { Charts.liveSpread($('#livePlotSpread'), t); } catch (e) { console.error(e); }
-    try { Charts.liveHealth($('#livePlotHealth'), state.liveHistory); } catch (e) { console.error(e); }
+    try { Charts.liveBlocking($('#liveBlocking'), t); } catch (e) { console.error(e); }
     try { Charts.liveSpark($('#liveSpark'), t.trace); } catch (e) { console.error(e); }
     renderSpeed(t);
     $('#liveNote').textContent = t.trace && t.trace.length > 1
       ? 'Best ' + Charts.metricLabel(t.metrics[1]).toLowerCase() + ' found so far.'
       : '';
-  }
-
-  //: One row per generation for the health chart. Keyed, because a snapshot
-  //: can be polled more than once before the next generation lands.
-  function recordHistory(t) {
-    const key = (t.seed_index || 0) + ':' + (t.generation || 0);
-    const last = state.liveHistory[state.liveHistory.length - 1];
-    if (last && last.key === key) return;
-    state.liveHistory.push({
-      key, gen: t.generation || 0, seed: t.seed_index || 0,
-      feasible: t.feasible_fraction || 0, front: (t.front || []).length
-    });
-    if (state.liveHistory.length > 400) state.liveHistory.shift();
   }
 
   function redrawLive() {
@@ -1257,10 +1318,7 @@ const App = (() => {
   }
 
   function renderSpeed(t) {
-    const rate = t.rate || 0;
-    const ceiling = Math.max((state.diagnostic || {}).rate || 0,
-                             (state.machine || {}).rate || 0, rate, 1) * 1.15;
-    try { Charts.speedometer($('#speedGauge'), rate, ceiling, 'sims / second'); }
+    try { Charts.speedometer($('#speedGauge'), t.rate || 0, 'sims / second'); }
     catch (e) { console.error(e); }
     $('#speedNote').textContent = t.workers ? 'Across ' + t.workers + ' cores.' : '';
   }
@@ -1405,10 +1463,14 @@ const App = (() => {
     }
     $('#emptyState').hidden = true;
     $('#panels').hidden = false;
+    // Reveal before drawing. Plotly cannot measure a container inside a hidden
+    // section, so charts built here came out at a default size and their
+    // traces ran off the plot area once the step was shown.
+    if (state.results.designs.length) goTo(RESULTS);
     renderProfiles();
     renderPanels();
+    renderLoadedBox();
     renderStepper();
-    if (state.results.designs.length) goTo(RESULTS);
   }
 
   /* -------------------------------------------------------- the results */
@@ -1494,6 +1556,7 @@ const App = (() => {
     state.profile = 'design';
     renderProfiles();
     renderPanels();
+    renderLoadedBox();
     toast('Option ' + (index + 1) + ' loaded as the optimized motor.');
   }
 
@@ -1535,7 +1598,7 @@ const App = (() => {
   }
 
   return { boot, state, unitScale, fmtLen, selectDesign, wireOptionsTable,
-           parseNumber, metricToDisplay };
+           parseNumber, metricToDisplay, renderTolerances };
 })();
 
 document.addEventListener('DOMContentLoaded', App.boot);

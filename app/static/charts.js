@@ -21,12 +21,13 @@ const Charts = (() => {
       plot_bgcolor: 'rgba(0,0,0,0)',
       font: { family: 'system-ui, -apple-system, sans-serif', size: 11,
               color: css('--ink-2') },
-      margin: { l: 54, r: 16, t: 10, b: 42 },
+      margin: { l: 58, r: 16, t: 10, b: 46 },
       xaxis: { gridcolor: css('--line-2'), zerolinecolor: css('--line'),
                linecolor: css('--line'), automargin: true },
       yaxis: { gridcolor: css('--line-2'), zerolinecolor: css('--line'),
                linecolor: css('--line'), automargin: true },
-      legend: { orientation: 'h', y: -0.22, font: { size: 10.5 } },
+      legend: { orientation: 'h', y: -0.30, yanchor: 'top', xanchor: 'center',
+                x: 0.5, font: { size: 10.5 } },
       hoverlabel: { bgcolor: css('--surface'), bordercolor: css('--line'),
                     font: { size: 11, color: css('--ink') } },
       showlegend: false
@@ -50,7 +51,19 @@ const Charts = (() => {
 
   function draw(node, traces, extra) {
     const layout = fixTitles(Object.assign(theme(), extra || {}));
-    Plotly.react(node, traces, layout, CONFIG);
+    Plotly.react(node, traces, makeRoom(layout), CONFIG);
+  }
+
+  //: A legend below the plot lands on the x-axis title unless the bottom
+  //: margin grows to hold both. Applied centrally so no panel can forget.
+  function makeRoom(layout) {
+    if (!layout.showlegend) return layout;
+    const legend = layout.legend || {};
+    if (legend.orientation !== 'h' || (legend.y || 0) >= 0) return layout;
+    const margin = Object.assign({}, layout.margin);
+    margin.b = Math.max(margin.b || 0, 78);
+    layout.margin = margin;
+    return layout;
   }
 
   //: Impulse reads as the horizontal axis and thrust as the vertical one, so
@@ -413,14 +426,21 @@ const Charts = (() => {
       render(node, ctx) {
         const r = ctx.robustness;
         if (!r) {
+          // The tolerances live here rather than earlier in the flow: they are
+          // only ever read by this check, so this is the one place they matter.
           node.innerHTML = `<div class="robust">
             <p class="lead">The optimizer works from nominal dimensions, so every
             design it returns sits exactly on whatever limits you set. This simulates
-            the design as it would actually come out of the shop — core diameters,
-            throat, and propellant batch each varying by the tolerances in the rail —
-            and reports how often it still stays legal.</p>
+            the design as it would actually come out of the shop and reports how often
+            it still stays legal.</p>
+            <div class="tol-block">
+              <div class="card-head"><h4>Build tolerances</h4>
+                <span class="sigma">1&sigma;</span></div>
+              <div class="rows" id="toleranceRows"></div>
+            </div>
             <div><button type="button" class="chip" id="btnRobust">Check robustness</button></div>
           </div>`;
+          App.renderTolerances();
           const b = node.querySelector('#btnRobust');
           if (b) b.addEventListener('click', () => ctx.onCheckRobustness(node));
           return;
@@ -447,8 +467,14 @@ const Charts = (() => {
               95% confidence ${(100 * r.pass_low).toFixed(0)}–${(100 * r.pass_high).toFixed(0)}%</span>
           </div>
           <div>${bars}</div>
+          <div class="tol-block">
+            <div class="card-head"><h4>Build tolerances</h4>
+              <span class="sigma">1&sigma;</span></div>
+            <div class="rows" id="toleranceRows"></div>
+          </div>
           <div><button type="button" class="chip" id="btnRobust">Run again</button></div>
         </div>`;
+        App.renderTolerances();
         const b = node.querySelector('#btnRobust');
         if (b) b.addEventListener('click', () => ctx.onCheckRobustness(node));
       }
@@ -776,34 +802,14 @@ const Charts = (() => {
     // user, and uirevision alone carries them across updates.
     if (!already) {
       if (range) { layout.xaxis.range = range.x; layout.yaxis.range = range.y; }
-      Plotly.newPlot(node, traces, layout,
+      Plotly.newPlot(node, traces, makeRoom(layout),
                      { displayModeBar: false, responsive: true, scrollZoom: true });
       return;
     }
     // Data only. Plotly.restyle leaves the axes untouched, so a drag in
     // progress is never interrupted by an arriving generation.
-    Plotly.react(node, traces, layout,
+    Plotly.react(node, traces, makeRoom(layout),
                  { displayModeBar: false, responsive: true, scrollZoom: true });
-  }
-
-  //: What the axes are showing right now, so a stretch control starts from
-  //: wherever the user last left them rather than from the stored range.
-  function liveAxes(node) {
-    if (!node || !node.layout) return null;
-    const x = node.layout.xaxis, y = node.layout.yaxis;
-    return (x && x.range && y && y.range)
-      ? { x: x.range.slice(), y: y.range.slice() } : null;
-  }
-
-  //: Widens or narrows one axis about its own midpoint.
-  function stretchAxis(node, axis, factor) {
-    const now = liveAxes(node);
-    if (!now) return;
-    const [lo, hi] = now[axis];
-    const mid = (lo + hi) / 2, half = (hi - lo) / 2 * factor;
-    Plotly.relayout(node, axis === 'x'
-      ? { 'xaxis.range': [mid - half, mid + half] }
-      : { 'yaxis.range': [mid - half, mid + half] });
   }
 
   function fitAxes(node, range) {
@@ -840,52 +846,55 @@ const Charts = (() => {
       Math.max.apply(null, grains.map(g => (g[i] || 0) / KG_LB)));
   }
 
-  //: Each quantity keeps its own axis and its own units, so one chart carries
-  //: all four without pretending they share a scale.
-  const AXIS_SLOT = [
-    { key: 'yaxis',  side: 'left',  anchor: 'x',    position: null },
-    { key: 'yaxis2', side: 'right', anchor: 'x',    position: null },
-    { key: 'yaxis3', side: 'left',  anchor: 'free', position: 0 },
-    { key: 'yaxis4', side: 'right', anchor: 'free', position: 1 }
-  ];
-
+  //: One axis, thrust, with the rest drawn against it. Each curve is scaled to
+  //: the thrust range so the shapes are comparable; the tooltip and the legend
+  //: both carry the real value, so nothing has to be read off the axis.
   function behaviourStack(node, c, constraints, keys) {
     if (!c || !c.time || !c.time.length) { node.innerHTML = ''; return; }
     const rows = keys.filter(k => BEHAVIOUR[k] && BEHAVIOUR[k].series(c).length);
     if (!rows.length) { node.innerHTML = ''; return; }
 
+    const series = {};
+    rows.forEach(k => { series[k] = BEHAVIOUR[k].series(c); });
+    const peak = arr => Math.max.apply(null, arr.map(Math.abs)) || 1;
+    const anchor = series.thrust ? peak(series.thrust) : peak(series[rows[0]]);
+
     const t = theme();
-    const outer = rows.length > 2 ? 0.055 : 0;
-    const layout = {
-      margin: { l: 8, r: 8, t: 12, b: 40 },
-      showlegend: true,
-      legend: Object.assign({}, t.legend, { y: -0.18 }),
-      hovermode: 'x unified',
-      shapes: [],
-      xaxis: Object.assign({}, t.xaxis, {
-        title: 'Time (s)', domain: [outer + 0.055, 1 - outer - 0.055] })
-    };
-    const traces = rows.map((key, i) => {
-      const row = BEHAVIOUR[key], slot = AXIS_SLOT[i];
-      const name = slot.key === 'yaxis' ? 'y' : 'y' + slot.key.slice(5);
-      layout[slot.key] = Object.assign({}, t.yaxis, {
-        title: { text: row.title, font: { color: row.colour } },
-        tickfont: { color: row.colour, size: 9.5 }, nticks: 6, ticklen: 3,
-        linecolor: row.colour, rangemode: 'tozero',
-        side: slot.side, anchor: slot.anchor,
-        showgrid: i === 0,                 // one grid, or the chart is a mesh
-        overlaying: i ? 'y' : undefined,
-        position: slot.anchor === 'free'
-          ? (slot.side === 'left' ? 0 : 1) : undefined
-      });
-      (constraints || []).forEach(con => {
-        if (!con.enabled || row.limits.indexOf(con.metric) < 0) return;
-        layout.shapes.push(hline(row.scale(con.value), name));
-      });
-      return { x: c.time, y: row.series(c), mode: 'lines', name: row.title,
-               line: { color: row.colour, width: 2 }, yaxis: name };
+    const traces = rows.map(key => {
+      const row = BEHAVIOUR[key], data = series[key];
+      const top = peak(data);
+      const scale = key === 'thrust' ? 1 : anchor / top;
+      const unit = row.title.replace(/^[^(]*\(?|\)$/g, '') || '';
+      return {
+        x: c.time, y: data.map(v => v * scale), customdata: data,
+        mode: 'lines', line: { color: row.colour, width: 2 },
+        name: key === 'thrust' ? row.title
+          : row.title + '  \u2022  peak ' + fmtNum(top),
+        hovertemplate: '%{customdata:,.4~r} ' + unit + '<extra></extra>'
+      };
     });
-    draw(node, traces, layout);
+
+    const shapes = [];
+    (constraints || []).forEach(con => {
+      const key = rows.find(k => BEHAVIOUR[k].limits.indexOf(con.metric) >= 0);
+      if (!key) return;
+      const scale = key === 'thrust' ? 1 : anchor / peak(series[key]);
+      shapes.push(hline(BEHAVIOUR[key].scale(con.value) * scale, 'y'));
+    });
+
+    draw(node, traces, {
+      showlegend: true,
+      hovermode: 'x unified',
+      shapes,
+      xaxis: Object.assign({}, t.xaxis, { title: 'Time (s)' }),
+      yaxis: Object.assign({}, t.yaxis, { title: 'Thrust (N)', rangemode: 'tozero' })
+    });
+  }
+
+  function fmtNum(v) {
+    if (v >= 1000) return Math.round(v).toLocaleString();
+    if (v >= 10) return v.toFixed(0);
+    return v.toFixed(v < 1 ? 3 : 2);
   }
 
   /* -------------------------------------------------- the running screen */
@@ -893,7 +902,12 @@ const Charts = (() => {
   //: A 240-degree sweep, drawn rather than plotted: Plotly has no gauge that
   //: reads at a glance in a box this size. The reading sits under the dial
   //: rather than inside it, so the needle never crosses its own number.
-  function speedometer(node, value, ceiling, label) {
+  //: Fixed 0-100 scale. A ceiling that moved with the reading made the needle
+  //: meaningless and let it run off the end.
+  const SPEED_MAX = 100;
+
+  function speedometer(node, value, label) {
+    const ceiling = SPEED_MAX;
     const W = 180, H = 116, cx = 90, cy = 86, r = 66;
     const START = 210, SWEEP = 240;            // clockwise, both ends below level
     const frac = Math.max(0, Math.min(value / (ceiling || 1), 1));
@@ -909,13 +923,17 @@ const Charts = (() => {
     const end = START - SWEEP, now = START - SWEEP * frac;
     let ticks = '';
     for (let i = 0; i <= 4; i++) {
-      const [x0, y0] = pt(START - SWEEP * i / 4, r - 10);
-      const [x1, y1] = pt(START - SWEEP * i / 4, r - 3);
+      const deg = START - SWEEP * i / 4;
+      const [x0, y0] = pt(deg, r - 10), [x1, y1] = pt(deg, r - 3);
+      const [lx, ly] = pt(deg, r - 20);
       ticks += `<line x1="${x0.toFixed(1)}" y1="${y0.toFixed(1)}"
         x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}"
-        stroke="var(--ink-3)" stroke-width="1.2" opacity=".45"/>`;
+        stroke="var(--ink-3)" stroke-width="1.2" opacity=".45"/>
+        <text x="${lx.toFixed(1)}" y="${(ly + 3).toFixed(1)}" text-anchor="middle"
+          font-family="ui-monospace, monospace" font-size="7.5"
+          fill="var(--ink-3)">${(SPEED_MAX * i / 4).toFixed(0)}</text>`;
     }
-    const [nx, ny] = pt(now, r - 17);
+    const [nx, ny] = pt(now, r - 27);
     node.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img"
       aria-label="${label}: ${value.toFixed(1)}">
       <path d="${arc(START, end, r)}" fill="none" stroke="var(--line)"
@@ -933,53 +951,22 @@ const Charts = (() => {
       <span class="u">${label}</span></div>`;
   }
 
-  //: Where this generation's population sits on the leading objective. NSGA-II
-  //: keeps a spread rather than converging to a point, so the shape of this is
-  //: what says whether the search is still exploring.
-  function liveSpread(node, snap) {
-    if (!snap || !snap.points || !snap.points.length) { node.innerHTML = ''; return; }
-    const flip = orderAxes(snap.metrics)[0] !== snap.metrics[0];
-    const at = p => flip ? p[1] : p[0];
-    const ok = snap.points.filter(p => p[2]).map(at);
-    const bad = snap.points.filter(p => !p[2]).map(at);
-    draw(node, [
-      { x: bad, type: 'histogram', name: 'over a limit', nbinsx: 26,
-        marker: { color: css('--line') }, opacity: .95 },
-      { x: ok, type: 'histogram', name: 'legal', nbinsx: 26,
-        marker: { color: SERIES[0] }, opacity: .85 }
-    ], {
-      barmode: 'overlay', showlegend: false, bargap: 0.04,
-      margin: { l: 40, r: 10, t: 8, b: 34 },
-      uirevision: 'spread',
-      xaxis: Object.assign(theme().xaxis, { title: axisTitle(orderAxes(snap.metrics)[0]) }),
-      yaxis: Object.assign(theme().yaxis, { title: 'designs' })
-    });
-  }
-
-  //: Two numbers that say whether the population is healthy: how much of it is
-  //: legal, and how many designs the front is holding.
-  function liveHealth(node, history) {
-    if (!history || history.length < 2) { node.innerHTML = ''; return; }
-    const step = history.map((h, i) => i);
-    draw(node, [
-      { x: step, y: history.map(h => 100 * h.feasible), mode: 'lines',
-        name: 'legal', line: { color: SERIES[2], width: 2 }, yaxis: 'y' },
-      { x: step, y: history.map(h => h.front), mode: 'lines',
-        name: 'front', line: { color: SERIES[1], width: 2 }, yaxis: 'y2' }
-    ], {
-      showlegend: false,
-      margin: { l: 42, r: 42, t: 8, b: 40 },
-      uirevision: 'health',
-      xaxis: Object.assign(theme().xaxis, { title: 'Generations elapsed' }),
-      yaxis: Object.assign(theme().yaxis, {
-        title: { text: 'Legal (%)', font: { color: SERIES[2] } },
-        tickfont: { color: SERIES[2], size: 10 }, range: [0, 100] }),
-      yaxis2: Object.assign(theme().yaxis, {
-        title: { text: 'Front', font: { color: SERIES[1] } },
-        tickfont: { color: SERIES[1], size: 10 },
-        overlaying: 'y', side: 'right', showgrid: false, rangemode: 'tozero',
-        nticks: 4, tickformat: 'd' })
-    });
+  //: Which limit is stopping designs right now. More useful than a spread:
+  //: it says what is shaping the search, not merely that it is running.
+  function liveBlocking(node, snap) {
+    const rows = (snap && snap.blocking) || [];
+    if (!rows.length) { node.innerHTML = ''; return; }
+    const sorted = rows.slice().sort((a, b) => b.share - a.share);
+    node.innerHTML = sorted.map(r => {
+      const pct = Math.round(r.share * 100);
+      return `<div class="block-row">
+        <span class="k">${metricLabel(r.metric)}</span>
+        <span class="bar"><span class="fill${pct > 60 ? ' hot' : ''}"
+          style="width:${pct}%"></span></span>
+        <span class="v">${pct}%</span></div>`;
+    }).join('') +
+      `<p class="sub">Share of this generation that each limit rules out. A limit
+       near 100% is the one the search is fighting.</p>`;
   }
 
   function liveSpark(node, trace) {
@@ -1003,6 +990,6 @@ const Charts = (() => {
 
   return { PANELS, PROFILES, theme, draw, metricValue, metricLabel, axisTitle,
            liveFrame, liveSpark, resetLive, orderAxes, behaviourStack,
-           speedometer, liveSpread, liveHealth, liveAxes, stretchAxis, fitAxes,
+           speedometer, liveBlocking, fitAxes,
            crossSectionSVG, parallelSVG, deltaTable };
 })();

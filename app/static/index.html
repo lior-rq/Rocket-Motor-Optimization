@@ -60,11 +60,16 @@
 
 <main class="wizard" id="wizard">
   <section class="step" data-wstep="0">
-    <header class="step-head"><h1>Motor</h1><p>Load the motor to optimise</p></header>
+    <header class="step-head"><h1>Motor</h1><p>Load the baseline motor to optimise</p></header>
+    <div class="baseline-box" id="baselineBox">
+      <span class="tag">Baseline</span>
+      <span class="name" id="baselineName">&mdash;</span>
+      <button type="button" class="link" id="btnLoadBaseline">Change</button>
+    </div>
     <div class="cols split">
       <div class="col">
         <section class="card">
-          <h2>Loaded motor</h2>
+          <h2>Baseline motor</h2>
           <dl class="specs" id="motorSpecs"></dl>
           <div class="warnings" id="motorWarnings"></div>
         </section>
@@ -104,7 +109,7 @@
       </div>
     </div>
     <section class="card">
-      <h2>How it behaves as loaded</h2>
+      <h2>How the baseline behaves</h2>
       <div id="motorThrust" class="motor-thrust tall"></div>
     </section>
   </section>
@@ -316,29 +321,11 @@
               </div>
               <div class="live-stats" id="liveStats"></div>
             </div>
-            <div class="plot-frame">
-              <div class="stretch stretch-y" id="stretchY">
-                <button type="button" class="ico" data-axis="y" data-factor="0.8"
-                  title="Zoom the vertical axis in">&#9650;</button>
-                <button type="button" class="ico" data-axis="y" data-factor="1.25"
-                  title="Zoom the vertical axis out">&#9660;</button>
-              </div>
-              <div class="live-plot" id="livePlot"></div>
-              <div class="stretch stretch-x" id="stretchX">
-                <button type="button" class="ico" data-axis="x" data-factor="1.25"
-                  title="Zoom the horizontal axis out">&#9664;</button>
-                <button type="button" class="ico" id="btnRefit"
-                  title="Fit both axes to the data">&#9678;</button>
-                <button type="button" class="ico" data-axis="x" data-factor="0.8"
-                  title="Zoom the horizontal axis in">&#9654;</button>
-              </div>
+            <div class="live-plot" id="livePlot"></div>
+            <div class="plot-foot">
+              <p class="sub drag-hint">Drag to pan, scroll to zoom.</p>
+              <button type="button" class="chip" id="btnRefit">Fit to data</button>
             </div>
-            <p class="sub drag-hint">Drag to pan, scroll to zoom, or use the arrows.</p>
-          </section>
-          <section class="card">
-            <h2>Best so far</h2>
-            <div class="live-spark" id="liveSpark"></div>
-            <p class="sub" id="liveNote"></p>
           </section>
         </div>
 
@@ -349,16 +336,13 @@
             <p class="sub" id="speedNote"></p>
           </section>
           <section class="card">
-            <h2>Population spread</h2>
-            <p class="sub">Where this generation sits. A spread means it is still
-              exploring; a spike means it has settled.</p>
-            <div class="side-plot" id="livePlotSpread"></div>
+            <h2>What is blocking designs</h2>
+            <div class="blocking" id="liveBlocking"></div>
           </section>
           <section class="card">
-            <h2>Population health</h2>
-            <p class="sub">How much of each generation is legal, and how many designs
-              the front is carrying.</p>
-            <div class="side-plot" id="livePlotHealth"></div>
+            <h2>Best so far</h2>
+            <div class="live-spark" id="liveSpark"></div>
+            <p class="sub" id="liveNote"></p>
           </section>
         </div>
       </div>
@@ -375,32 +359,37 @@
 
   <section class="step" data-wstep="6" hidden>
     <header class="step-head"><h1>Results</h1><p>The designs it found</p></header>
-    <nav class="profiles" id="profiles" role="tablist"></nav>
-    <div class="panels" id="panels" hidden></div>
+
     <section class="card" id="reportCard" hidden>
-      <h2>Design sheets</h2>
-      <p class="hint">Every run writes its own report as soon as it finishes, covering
-        the whole curve and which limit binds. This is the other document: one sheet per
-        design, giving the dimensions to machine to, packaged as a zip archive.</p>
-      <div class="design-actions">
-        <button type="button" class="chip" id="btnReportOpen">Open this run&rsquo;s report</button>
-        <button type="button" class="chip" id="btnBundle">Download every design (.zip)</button>
+      <div class="card-head">
+        <h2>Design sheets</h2>
+        <div class="design-actions">
+          <button type="button" class="chip" id="btnReportOpen">Open this run&rsquo;s report</button>
+          <button type="button" class="chip" id="btnBundle">Download every design (.zip)</button>
+        </div>
       </div>
       <div class="bundle-progress" id="bundleProgress" hidden>
         <div class="bar"><div class="fill" id="bundleFill"></div></div>
         <span class="meta" id="bundleMsg"></span>
       </div>
     </section>
-    <section class="card" id="toleranceCard">
-      <div class="card-head">
-        <h2>Build tolerances</h2>
-        <span class="hint sigma">1&sigma;</span>
+
+    <div class="motor-boxes">
+      <div class="baseline-box" id="resultBaselineBox">
+        <span class="tag">Baseline</span>
+        <span class="name" id="resultBaselineName">&mdash;</span>
+        <span class="figs" id="resultBaselineFigs"></span>
       </div>
-      <p class="hint">How much the real thing differs from the drawing. Used by the
-        robustness check in <strong>Compare &amp; Safety</strong>, never by the
-        optimizer, which always works from nominal.</p>
-      <div class="rows" id="toleranceRows"></div>
-    </section>
+      <div class="baseline-box loaded" id="loadedBox" hidden>
+        <span class="tag alt">Loaded</span>
+        <span class="name" id="loadedName">&mdash;</span>
+        <span class="figs" id="loadedFigs"></span>
+        <button type="button" class="chip" id="btnLoadedExport">Download .ric</button>
+      </div>
+    </div>
+
+    <nav class="profiles" id="profiles" role="tablist"></nav>
+    <div class="panels" id="panels" hidden></div>
   </section>
 </main>
 

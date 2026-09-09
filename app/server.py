@@ -253,10 +253,20 @@ def validate(payload: SpecPayload) -> JSONResponse:
         if block.get("count") is not None:
             block["count_exact"] = str(block["count"])
             block["count"] = float(block["count"])
+    # One per preset, so the effort cards quote this machine rather than a
+    # nominal figure once the diagnostic has measured it.
+    presets = {}
+    for key in EFFORT_LEVELS:
+        variant = RunSpec.from_dict(payload.spec)
+        variant.effort = key
+        variant.budget_simulations = None
+        variant.seeds = None
+        presets[key] = _estimate(variant)["seconds"]
     return JSONResponse({"problems": [m for _, m in found],
                          "problem_areas": [a for a, _ in found],
                          "notes": notes,
-                         "estimate": estimate, "sizing": sizing})
+                         "estimate": estimate, "sizing": sizing,
+                         "preset_seconds": presets})
 
 
 def _plain_counts(chain: Dict) -> Dict:

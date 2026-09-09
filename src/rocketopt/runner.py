@@ -60,7 +60,8 @@ def _snapshot(frame: pd.DataFrame, objective: Objective, space: DesignSpace,
         if companion is None:
             return None
         metrics = [metrics[0], companion]
-    violation = scale_constraints(frame, objective, space).max(axis=1)
+    scaled = scale_constraints(frame, objective, space)
+    violation = scaled.max(axis=1)
     feasible = frame["ok"].to_numpy(dtype=bool) & (violation <= 0)
     x = frame[metrics[1]].to_numpy(dtype=float)
     y = frame[metrics[0]].to_numpy(dtype=float)
@@ -91,6 +92,13 @@ def _snapshot(frame: pd.DataFrame, objective: Objective, space: DesignSpace,
         "points": [[float(x[i]), float(y[i]), bool(feasible[i])] for i in order],
         "front": [[float(a), float(b)] for a, b in front],
         "feasible_fraction": float(feasible.mean()),
+        # Which limit is actually stopping designs, so the waiting screen can
+        # say what is shaping the search rather than only that it is running.
+        "blocking": [
+            {"metric": c.metric, "op": c.op,
+             "share": float((scaled[:, i] > 0).mean())}
+            for i, c in enumerate(objective.constraints)
+        ] if objective.constraints else [],
         "single_objective": bool(single),
         "surrogate": bool(surrogate),
         "best": [float(y[feasible].max()), float(x[feasible].max())]
