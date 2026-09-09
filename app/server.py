@@ -590,6 +590,14 @@ def design_curves(payload: CurvePayload) -> JSONResponse:
     return JSONResponse(jsonable(design))
 
 
+@app.middleware("http")
+async def no_store(request, call_next):
+    """A cached index.html against a fresh app.js breaks the page silently."""
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/legacy")
 def legacy_view() -> FileResponse:
     """The single-page interface the wizard replaced."""

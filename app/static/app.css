@@ -473,9 +473,12 @@ table.vars.hardware select {
   background: var(--line); color: var(--ink-2);
   display: grid; place-items: center; font-size: 11px; font-variant-numeric: tabular-nums;
 }
-.step-tab:hover:not(:disabled) { color: var(--ink); }
-.step-tab.active { color: var(--ink); border-bottom-color: var(--accent); }
-.step-tab.active .num { background: var(--accent); color: #fff; }
+.step-tab:hover:not(:disabled) { color: var(--ink); background: var(--line-2); }
+.step-tab.active {
+  color: #fff; background: var(--accent); border-bottom-color: var(--accent);
+  border-radius: var(--radius) var(--radius) 0 0; font-weight: 600;
+}
+.step-tab.active .num { background: rgba(255, 255, 255, .28); color: #fff; }
 .step-tab.done .num { background: var(--good); color: #fff; }
 .step-tab:disabled { opacity: .38; cursor: not-allowed; }
 
@@ -510,3 +513,8 @@ table.vars.hardware select {
 .check-row.bad .v { color: var(--warn); }
 .legacy-link { font-size: 12px; color: var(--ink-3); text-decoration: none; white-space: nowrap; }
 .legacy-link:hover { color: var(--ink-2); text-decoration: underline; }
+
+.step-crumb {
+  font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

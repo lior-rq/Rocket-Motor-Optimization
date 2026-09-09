@@ -49,18 +49,18 @@
 </div>
 
 <nav class="stepper" id="stepper">
-    <button type="button" class="step-tab" data-step="0"><span class="num">1</span><span class="name">Motor</span></button>
-    <button type="button" class="step-tab" data-step="1"><span class="num">2</span><span class="name">Variables</span></button>
-    <button type="button" class="step-tab" data-step="2"><span class="num">3</span><span class="name">Constraints</span></button>
-    <button type="button" class="step-tab" data-step="3"><span class="num">4</span><span class="name">Optimize</span></button>
-    <button type="button" class="step-tab" data-step="4"><span class="num">5</span><span class="name">Tolerances</span></button>
-    <button type="button" class="step-tab" data-step="5"><span class="num">6</span><span class="name">Settings</span></button>
-    <button type="button" class="step-tab" data-step="6"><span class="num">7</span><span class="name">Running</span></button>
-    <button type="button" class="step-tab" data-step="7"><span class="num">8</span><span class="name">Results</span></button>
+    <button type="button" class="step-tab" data-wstep="0"><span class="num">1</span><span class="name">Motor</span></button>
+    <button type="button" class="step-tab" data-wstep="1"><span class="num">2</span><span class="name">Variables</span></button>
+    <button type="button" class="step-tab" data-wstep="2"><span class="num">3</span><span class="name">Constraints</span></button>
+    <button type="button" class="step-tab" data-wstep="3"><span class="num">4</span><span class="name">Optimize</span></button>
+    <button type="button" class="step-tab" data-wstep="4"><span class="num">5</span><span class="name">Tolerances</span></button>
+    <button type="button" class="step-tab" data-wstep="5"><span class="num">6</span><span class="name">Settings</span></button>
+    <button type="button" class="step-tab" data-wstep="6"><span class="num">7</span><span class="name">Running</span></button>
+    <button type="button" class="step-tab" data-wstep="7"><span class="num">8</span><span class="name">Results</span></button>
 </nav>
 
 <main class="wizard" id="wizard">
-  <section class="step" data-step="0">
+  <section class="step" data-wstep="0">
     <header class="step-head"><h1>Motor</h1><p>Load the motor to optimise</p></header>
     <section class="card">
       <h2>Loaded motor</h2>
@@ -100,7 +100,7 @@
       <div id="motorThrust" class="motor-thrust"></div>
     </section>
   </section>
-  <section class="step" data-step="1" hidden>
+  <section class="step" data-wstep="1" hidden>
     <header class="step-head"><h1>Variables</h1><p>Choose what may change, and by how much</p></header>
     <section class="card">
       <div class="card-head">
@@ -147,7 +147,7 @@
       <div class="sizing" id="sizing"></div>
     </section>
   </section>
-  <section class="step" data-step="2" hidden>
+  <section class="step" data-wstep="2" hidden>
     <header class="step-head"><h1>Constraints</h1><p>Set the limits the design must respect</p></header>
     <section class="card">
       <div class="card-head">
@@ -161,7 +161,7 @@
       <div id="baselineCheck" class="baseline-check"></div>
     </section>
   </section>
-  <section class="step" data-step="3" hidden>
+  <section class="step" data-wstep="3" hidden>
     <header class="step-head"><h1>Optimize</h1><p>Choose what to push up, down, or toward a target</p></header>
     <section class="card">
       <div class="card-head">
@@ -178,7 +178,7 @@
       </div>
     </section>
   </section>
-  <section class="step" data-step="4" hidden>
+  <section class="step" data-wstep="4" hidden>
     <header class="step-head"><h1>Tolerances</h1><p>Optional: how much the build varies</p></header>
     <section class="card">
       <div class="card-head">
@@ -191,7 +191,7 @@
       <div class="rows" id="toleranceRows"></div>
     </section>
   </section>
-  <section class="step" data-step="5" hidden>
+  <section class="step" data-wstep="5" hidden>
     <header class="step-head"><h1>Settings</h1><p>Search effort, cores, and how long it will take</p></header>
     <section class="card">
       <h2>How hard to look</h2>
@@ -222,7 +222,7 @@
       <div class="problems" id="problems"></div>
     </section>
   </section>
-  <section class="step" data-step="6" hidden>
+  <section class="step" data-wstep="6" hidden>
     <header class="step-head"><h1>Running</h1><p>The search, live</p></header>
     <section class="card">
       <div class="live" id="live" hidden>
@@ -248,7 +248,7 @@
       </div>
     </section>
   </section>
-  <section class="step" data-step="7" hidden>
+  <section class="step" data-wstep="7" hidden>
     <header class="step-head"><h1>Results</h1><p>The designs it found</p></header>
     <nav class="profiles" id="profiles" role="tablist"></nav>
     <div class="panels" id="panels" hidden></div>
@@ -271,6 +271,7 @@
 
 <footer class="wizard-foot">
   <button type="button" class="ghost" id="btnBack">Back</button>
+  <span class="step-crumb" id="stepCrumb"></span>
   <p class="step-gate" id="stepGate"></p>
   <button type="button" class="primary" id="btnNext">Next</button>
 </footer>

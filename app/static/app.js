@@ -162,7 +162,7 @@ const App = (() => {
         state.spec.variables.forEach(v => { v.free = free; });
         renderVariables(); validate();
       }));
-    document.querySelectorAll('[data-step]').forEach(b =>
+    document.querySelectorAll('.chip[data-step]').forEach(b =>
       b.addEventListener('click', () => {
         const inches = Number(b.dataset.step);
         state.spec.variables.forEach(v => { v.step = inches * M_PER_IN; });
@@ -577,7 +577,7 @@ const App = (() => {
   function goTo(i) {
     state.step = Math.max(0, Math.min(i, STEPS - 1));
     document.querySelectorAll('.step').forEach(el => {
-      el.hidden = Number(el.dataset.step) !== state.step;
+      el.hidden = Number(el.dataset.wstep) !== state.step;
     });
     renderStepper();
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -588,18 +588,30 @@ const App = (() => {
   function renderStepper() {
     const reach = furthestAllowed();
     document.querySelectorAll('.step-tab').forEach(tab => {
-      const i = Number(tab.dataset.step);
+      const i = Number(tab.dataset.wstep);
       tab.classList.toggle('active', i === state.step);
       tab.classList.toggle('done', i < state.step && stepDone(i));
       tab.disabled = i > reach;
     });
+    const crumb = $('#stepCrumb');
+    if (crumb) crumb.textContent = 'Step ' + (state.step + 1) + ' of ' + STEPS;
     const back = $('#btnBack'), next = $('#btnNext'), gate = $('#stepGate');
+    if (!back || !next || !gate) return;
     back.disabled = state.step === 0;
     const last = state.step === STEPS - 1;
     next.hidden = last;
     next.textContent = state.step === 5 ? 'Optimize' : 'Next';
     next.disabled = !stepDone(state.step);
     gate.textContent = last || stepDone(state.step) ? '' : gateReason(state.step);
+
+    // Only from the settings step, so the flow is walked rather than skipped.
+    const ready = state.step >= 5 && [0, 1, 2, 3, 4].every(stepDone)
+      && (state.validation.problems || []).length === 0;
+    const run = $('#btnRun');
+    if (run && !state.jobId) {
+      run.disabled = !ready;
+      run.title = ready ? '' : 'Available on the Settings step';
+    }
   }
 
   function gateReason(i) {
@@ -614,18 +626,24 @@ const App = (() => {
     }
   }
 
+  function on(sel, event, fn) {
+    const el = $(sel);
+    if (el) el.addEventListener(event, fn);
+    return el;
+  }
+
   function wireWizard() {
-    $('#btnBack').addEventListener('click', () => goTo(state.step - 1));
-    $('#btnNext').addEventListener('click', () => {
+    on('#btnBack', 'click', () => goTo(state.step - 1));
+    on('#btnNext', 'click', () => {
       if (state.step === 5) { startRun(); return; }
       goTo(state.step + 1);
     });
     document.querySelectorAll('.step-tab').forEach(tab =>
-      tab.addEventListener('click', () => goTo(Number(tab.dataset.step))));
+      tab.addEventListener('click', () => goTo(Number(tab.dataset.wstep))));
   }
 
   function renderMotorPreview() {
-    if (!state.motor) return;
+    if (!state.motor || !$('#motorPreview')) return;
     const b = Object.assign({}, state.motor, { curves: state.baselineCurves });
     $('#motorPreview').innerHTML = Charts.crossSectionSVG(b, b);
     const c = state.baselineCurves;
@@ -653,6 +671,7 @@ const App = (() => {
   function renderBaselineCheck() {
     const host = $('#baselineCheck');
     const m = state.motor;
+    if (!host) return;
     if (!m || !state.spec) { host.innerHTML = ''; return; }
     const num = v => v.toLocaleString(undefined, { maximumFractionDigits: 3 });
     let unknown = 0;
@@ -688,7 +707,8 @@ const App = (() => {
       host.innerHTML =
         (data.problems || []).map(p => `<div class="problem err">${p}</div>`).join('') +
         (data.notes || []).map(p => `<div class="problem note">${p}</div>`).join('');
-      $('#btnRun').disabled = (data.problems || []).length > 0;
+      state.validation = data;
+      renderStepper();
       renderSizing(data.sizing);
       const est = data.estimate || {};
       $('#budgetSplit').innerHTML = est.seeds
