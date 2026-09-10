@@ -136,8 +136,13 @@ designs. A run that finds no legal design is documented in the most detail, incl
 which limit could not be met and, where burning area is closed-form, a proof that no
 core diameter would have satisfied it.
 
-A second document is available on request: one sheet per design on the trade-off
-curve, packaged as a zip archive.
+Two further downloads are available on request. The design sheets are one PDF per
+design on the trade-off curve, with the dimensions to machine to. The motor files are
+RASP `.eng`, one per design, which OpenRocket and RockSim read directly; each is a real
+openMotor run at the verification timestep, so it agrees with the report. The `.eng`
+format carries a single total-mass field and this application never models hardware, so
+that field holds the propellant mass alone and the casing has to be added before the
+file is used for an altitude simulation. Every file says so in its own header.
 
 `outputs/` mirrors the most recent optimisation and nothing else. It is emptied and
 rewritten on every run, so its contents always describe the motor that was just

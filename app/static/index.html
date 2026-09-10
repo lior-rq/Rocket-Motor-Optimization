@@ -365,9 +365,13 @@
         <h2>Design sheets</h2>
         <div class="design-actions">
           <button type="button" class="chip" id="btnReportOpen">Open this run&rsquo;s report</button>
-          <button type="button" class="chip" id="btnBundle">Download every design (.zip)</button>
+          <button type="button" class="chip" id="btnBundle">Design sheets (.zip)</button>
+          <button type="button" class="chip" id="btnEng">Motor files (.eng)</button>
         </div>
       </div>
+      <p class="hint">Sheets are one PDF per design with the dimensions to machine
+        to. Motor files are RASP <code>.eng</code>, which OpenRocket and RockSim read;
+        their total mass is propellant only, so add the hardware mass there.</p>
       <div class="bundle-progress" id="bundleProgress" hidden>
         <div class="bar"><div class="fill" id="bundleFill"></div></div>
         <span class="meta" id="bundleMsg"></span>

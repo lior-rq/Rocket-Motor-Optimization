@@ -558,8 +558,8 @@ def get_report(job_id: str) -> Response:
 
 
 @app.post("/api/jobs/{job_id}/bundle")
-def start_bundle(job_id: str) -> JSONResponse:
-    """Begins rendering one sheet per design on this run's trade-off curve."""
+def start_bundle(job_id: str, kind: str = "sheets") -> JSONResponse:
+    """Begins building a per-design download: PDF sheets, or RASP .eng files."""
     motor = _require_motor()
     job = jobs.get(job_id)
     if job is None:
@@ -568,8 +568,11 @@ def start_bundle(job_id: str) -> JSONResponse:
         raise HTTPException(409, "Run {} is {}.".format(job_id, job.status))
     if not job.result.designs:
         raise HTTPException(
-            409, "That run found no legal designs, so there are no sheets to write.")
-    jobs.start_bundle(job, motor, ROOT / "reports")
+            409, "That run found no legal designs, so there is nothing to write.")
+    if kind not in ("sheets", "eng"):
+        raise HTTPException(400, "Unknown download {!r}.".format(kind))
+    jobs.start_bundle(job, motor, ROOT / "reports", kind=kind,
+                      workers=machine_summary()["default_workers"])
     return JSONResponse(job.status_dict())
 
 
@@ -584,7 +587,8 @@ def bundle_status(job_id: str) -> Response:
     return Response(
         content=job.bundle.read_bytes(), media_type="application/zip",
         headers={"Content-Disposition":
-                 'attachment; filename="{}"'.format(job.bundle.name)})
+                 'attachment; filename="{}"'.format(job.bundle.name),
+                 "X-Bundle-Kind": job.bundle_kind})
 
 
 @app.get("/api/jobs/{job_id}")

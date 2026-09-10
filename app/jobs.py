@@ -66,6 +66,9 @@ class Job:
     report_error: str = ""
     #: One sheet per design, zipped. On request only: a browser launch each.
     bundle: Optional[Path] = None
+    #: "sheets" for the per-design PDFs, "eng" for the RASP motor files. One
+    #: at a time: both are heavy, and the screen only shows one progress bar.
+    bundle_kind: str = "sheets"
     bundle_status: str = "idle"      # idle | building | ready | failed
     bundle_done: int = 0
     bundle_total: int = 0
@@ -78,6 +81,7 @@ class Job:
         return {
             "report": self.report.name if self.report else "",
             "report_error": self.report_error,
+            "bundle_kind": self.bundle_kind,
             "bundle_status": self.bundle_status,
             "bundle_done": self.bundle_done,
             "bundle_total": self.bundle_total,
@@ -126,13 +130,17 @@ class JobRegistry:
         blended = observed if previous is None else 0.5 * previous + 0.5 * observed
         self._factors[shape] = float(min(max(blended, 0.2), 5.0))
 
-    def start_bundle(self, job: Job, base_motor: Dict, out_dir: Path) -> bool:
-        """Renders one sheet per design. One browser launch each, so not inline."""
+    def start_bundle(self, job: Job, base_motor: Dict, out_dir: Path,
+                     kind: str = "sheets", workers: Optional[int] = None) -> bool:
+        """Builds the per-design download. Never inline: the sheets launch a
+        browser each and the .eng files are a full simulation each."""
         if job.result is None or job.status != "done":
             return False
         if job.bundle_status == "building":
             return True
 
+        job.bundle_kind = kind
+        job.bundle = None
         job.bundle_status = "building"
         job.bundle_done, job.bundle_total = 0, len(job.result.designs)
         job.bundle_message = "Starting"
@@ -144,17 +152,27 @@ class JobRegistry:
 
         def target() -> None:
             try:
-                out = out_dir / "design-sheets-{}.zip".format(job.id)
-                job.bundle = build_bundle(
-                    ReportRun(label=job.label, result=job.result.to_dict(),
-                              spec=job.spec),
-                    base_motor, out, on_progress=progress)
+                if kind == "eng":
+                    from rocketopt.eng import build_eng_bundle
+                    from rocketopt.runner import build_space
+
+                    out = out_dir / "eng-files-{}.zip".format(job.id)
+                    job.bundle = build_eng_bundle(
+                        job.result.designs, build_space(job.spec, base_motor),
+                        base_motor, out, on_progress=progress, workers=workers)
+                else:
+                    out = out_dir / "design-sheets-{}.zip".format(job.id)
+                    job.bundle = build_bundle(
+                        ReportRun(label=job.label, result=job.result.to_dict(),
+                                  spec=job.spec),
+                        base_motor, out, on_progress=progress)
                 job.bundle_status = "ready"
                 job.bundle_message = "Ready"
             except Exception as exc:
                 job.bundle_status = "failed"
                 job.bundle_error = str(exc)
-                job.bundle_message = "Could not build the sheets"
+                job.bundle_message = ("Could not write the .eng files" if kind == "eng"
+                                      else "Could not build the sheets")
                 traceback.print_exc()
 
         threading.Thread(target=target, name="bundle-" + job.id,

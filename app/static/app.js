@@ -16,7 +16,7 @@ const App = (() => {
     tolerances: null, toleranceFields: {}, robustness: null,
     profile: 'design', selected: 0, baselineCurves: null, reportJob: null,
     step: 0, reached: 0, validation: { problems: [] },
-    ready: {}, diagnostic: null, diagRunning: false,
+    ready: {}, diagnostic: null, diagRunning: false, bundleKind: 'sheets',
     battery: null, batteryHandle: null, wakeLock: null, presetSeconds: null,
     liveRange: null, liveSnap: null, runStart: 0
   };
@@ -151,7 +151,8 @@ const App = (() => {
       Charts.fitAxes($('#livePlot'),
                      state.liveSnap ? fitRange(state.liveSnap) : state.liveRange));
     $('#btnReportOpen').addEventListener('click', openReport);
-    $('#btnBundle').addEventListener('click', downloadBundle);
+    $('#btnBundle').addEventListener('click', () => downloadBundle('sheets'));
+    on('#btnEng', 'click', () => downloadBundle('eng'));
     $('#btnCancel').addEventListener('click', cancelRun);
     $('#btnLoad').addEventListener('click', () => $('#fileInput').click());
     on('#btnLoadBaseline', 'click', () => $('#fileInput').click());
@@ -1372,23 +1373,35 @@ const App = (() => {
     open.textContent = job.report
       ? "Open this run's report"
       : (job.report_error ? 'Report could not be written' : 'No report');
-    $('#btnBundle').disabled = !job.n_designs;
+    bundleButtons(!job.n_designs);
   }
 
   function openReport() {
     if (state.reportJob) window.open('/api/jobs/' + state.reportJob + '/report', '_blank');
   }
 
-  async function downloadBundle() {
+  //: Both downloads share one progress bar, so only one runs at a time.
+  const BUNDLE_BUTTONS = { sheets: '#btnBundle', eng: '#btnEng' };
+
+  function bundleButtons(disabled) {
+    Object.values(BUNDLE_BUTTONS).forEach(sel => {
+      const b = $(sel);
+      if (b) b.disabled = disabled;
+    });
+  }
+
+  async function downloadBundle(kind) {
     if (!state.reportJob) return;
-    const button = $('#btnBundle');
-    button.disabled = true;
+    state.bundleKind = kind;
+    bundleButtons(true);
     $('#bundleProgress').hidden = false;
-    $('#bundleMsg').textContent = 'Starting…';
-    const res = await fetch('/api/jobs/' + state.reportJob + '/bundle', { method: 'POST' });
+    $('#bundleMsg').textContent = 'Starting\u2026';
+    $('#bundleFill').style.width = '0%';
+    const res = await fetch('/api/jobs/' + state.reportJob + '/bundle?kind=' + kind,
+                            { method: 'POST' });
     if (!res.ok) {
       toast((await res.json()).detail || 'Could not start.');
-      button.disabled = false; $('#bundleProgress').hidden = true;
+      bundleButtons(false); $('#bundleProgress').hidden = true;
       return;
     }
     pollBundle();
@@ -1396,7 +1409,7 @@ const App = (() => {
 
   async function pollBundle() {
     const res = await fetch('/api/jobs/' + state.reportJob + '/bundle');
-    if (!res.ok) { $('#bundleProgress').hidden = true; $('#btnBundle').disabled = false; return; }
+    if (!res.ok) { $('#bundleProgress').hidden = true; bundleButtons(false); return; }
 
     // Ready, and the zip itself is the response rather than a status.
     if ((res.headers.get('Content-Type') || '').includes('zip')) {
@@ -1405,24 +1418,25 @@ const App = (() => {
       const a = document.createElement('a');
       a.href = url;
       a.download = (res.headers.get('Content-Disposition') || '')
-        .replace(/.*filename="([^"]+)".*/, '$1') || 'design-sheets.zip';
+        .replace(/.*filename="([^"]+)".*/, '$1')
+        || (state.bundleKind === 'eng' ? 'eng-files.zip' : 'design-sheets.zip');
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 30000);
       $('#bundleFill').style.width = '100%';
       $('#bundleMsg').textContent = 'Downloaded.';
-      $('#btnBundle').disabled = false;
+      bundleButtons(false);
       return;
     }
 
     const job = await res.json();
     if (job.bundle_status === 'failed') {
-      toast(job.bundle_error || 'Could not build the sheets.');
-      $('#bundleProgress').hidden = true; $('#btnBundle').disabled = false;
+      toast(job.bundle_error || 'Could not build that download.');
+      $('#bundleProgress').hidden = true; bundleButtons(false);
       return;
     }
     const frac = job.bundle_total ? job.bundle_done / job.bundle_total : 0;
     $('#bundleFill').style.width = (100 * frac).toFixed(1) + '%';
-    $('#bundleMsg').textContent = job.bundle_message || 'Working…';
+    $('#bundleMsg').textContent = job.bundle_message || 'Working\u2026';
     setTimeout(pollBundle, 900);
   }
 

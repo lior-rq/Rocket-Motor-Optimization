@@ -421,10 +421,16 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
   options and geometry, all derived from the run itself. A run that finds no legal design
   is documented in the greatest detail, covering which limit could not be met, how close
   the search came, and what would have to change.</p>
-  <p><strong>Download every design</strong> produces a second document: one sheet per
-  design on the curve, giving the dimensions to machine to, packaged as a zip archive.
-  Separately, <code>outputs/</code> is emptied and rewritten with the most recent run,
-  holding its result, its designs as <code>.ric</code> files, and its figures.</p>
+  <p><strong>Design sheets</strong> gives one PDF per design on the curve, with
+      the dimensions to machine to, packaged as a zip archive.</p>
+      <p><strong>Motor files</strong> gives one RASP <code>.eng</code> per design in a
+      zip, the format OpenRocket and RockSim read. Each curve is a real openMotor run at
+      the verification timestep, so an <code>.eng</code> agrees with the figures this run
+      reported for the same design. One caveat matters: RASP has a single total-mass
+      field and this application never models hardware, so that field holds the
+      propellant mass alone, and the diameter and length are the grain outer diameter and
+      the grain stack. The case, nozzle and closures have to be added before the file is
+      used for an altitude simulation. Every file repeats this in its own header.</p>
   </div>
 </section>
 
