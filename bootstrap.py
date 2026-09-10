@@ -27,16 +27,18 @@ OPENMOTOR_COMMIT = "0dfb3f1dd4f843499c7f71dc85a3dfde5dd15c6a"
 REQUIRED = ("fastapi", "uvicorn", "numpy", "pandas", "pymoo", "sklearn",
             "matplotlib", "plotly", "motorlib.motor")
 
-#: numpy 1.26, scipy 1.13 and scikit-image 0.24 publish wheels to cp312 only.
-#: PyPI records no upper bound, so on 3.13 pip tries to compile numpy from
-#: source and fails with a meson error that never mentions the Python version.
+#: 3.13 is the newest the pinned wheels cover. requirements.txt carries two
+#: sets: 3.10 and later get numpy 2 and the versions built for 3.13, while 3.9
+#: keeps numpy 1, since numpy 2 dropped it. 3.14 is not yet reachable because
+#: scipy and scikit-image need 3.11 there and scikit-fmm ships no 3.14 wheel.
 MIN_PYTHON = (3, 9)
-MAX_PYTHON = (3, 12)
+MAX_PYTHON = (3, 13)
 
 #: Tried in order when the interpreter running this is out of range. The
 #: Windows launcher is asked for specific versions; elsewhere the names are.
-CANDIDATE_PYTHONS = ["python3.12", "python3.11", "python3.10", "python3.9"]
-WINDOWS_LAUNCHER_VERSIONS = ["3.12", "3.11", "3.10", "3.9"]
+CANDIDATE_PYTHONS = ["python3.13", "python3.12", "python3.11", "python3.10",
+                     "python3.9"]
+WINDOWS_LAUNCHER_VERSIONS = ["3.13", "3.12", "3.11", "3.10", "3.9"]
 
 
 def version_of(python) -> Optional[tuple]:

@@ -181,17 +181,26 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
   before building an environment: a <code>.venv</code> in the project folder, the packages
   listed in <code>requirements.txt</code>, and a clone of openMotor pinned to a known
   commit. Nothing outside the project folder is modified. The requirements are
-  <strong>Python 3.9 to 3.12</strong> and <code>git</code>. A C compiler is optional,
-  because the one compiled module in openMotor is never called during a BATES
-  simulation. Without a compiler, setup substitutes a pure-Python stand-in.</p>
-  <div class="note warn">
-    <span class="lbl">Why 3.12 and not newer</span>
-    <p>The pinned numpy, scipy and scikit-image versions publish wheels up to Python 3.12
-    only. PyPI does not record this as an upper bound, so on 3.13 pip attempts a source
-    build of numpy instead of refusing. That build requires a C and Fortran toolchain and
-    fails on most machines, with a meson error that never mentions the Python version.
-    Setup checks the range before installing anything, and will use a supported
-    interpreter if one is installed alongside a newer one.</p>
+  <strong>Python 3.9 to 3.13</strong> and <code>git</code>. A C++ compiler is needed
+  on macOS and Linux, because scikit-fmm publishes Windows wheels only and is built from
+  source everywhere else: <code>xcode-select --install</code> on macOS,
+  <code>apt install build-essential python3-dev</code> on Debian. Separately, openMotor
+  contains one compiled module that a BATES simulation never calls; if that one fails to
+  build, setup substitutes a pure-Python stand-in.</p>
+
+  <div class="note">
+    <span class="lbl">Why 3.13 and not newer</span>
+    <p>The pinned wheels stop there. <code>requirements.txt</code> carries two sets:
+    Python 3.10 and later get numpy 2 and the versions built for 3.13, while 3.9 keeps
+    numpy 1, the last release that supports it. PyPI records no upper bound on any of
+    them, so on an unsupported version pip attempts a source build rather than refusing,
+    and that build needs a C and Fortran toolchain. Setup checks the range before
+    installing anything, and will use a supported interpreter if one is installed
+    alongside a newer one.</p>
+    <p>3.14 is not reachable yet. scipy and scikit-image both require 3.11 or later at
+    the versions that support it, which is workable, but scikit-fmm publishes no 3.14
+    wheel at any version and its source does not build against numpy 2 before
+    2025.6.23.</p>
   </div>
   </div>
   <div class="prose">

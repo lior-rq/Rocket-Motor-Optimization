@@ -1,8 +1,18 @@
 # your computer will explode if u try to run this code without installing these dependencies
-numpy<2
-scipy==1.13.1
-scikit-fmm==2025.1.29
-scikit-image==0.24.0
+
+# Two sets. Python 3.10 and later get numpy 2 and the versions that publish
+# wheels for 3.13; 3.9 keeps the numpy 1 set, because numpy 2 dropped it.
+# scikit-fmm before 2025.6.23 does not compile against numpy 2 at all.
+numpy<2; python_version < "3.10"
+scipy==1.13.1; python_version < "3.10"
+scikit-image==0.24.0; python_version < "3.10"
+scikit-fmm==2025.1.29; python_version < "3.10"
+
+numpy==2.2.6; python_version >= "3.10"
+scipy==1.15.3; python_version >= "3.10"
+scikit-image==0.25.2; python_version >= "3.10"
+scikit-fmm==2025.6.23; python_version >= "3.10"
+
 PyYAML==6.0.3
 matplotlib==3.9.4
 scikit-learn==1.6.1

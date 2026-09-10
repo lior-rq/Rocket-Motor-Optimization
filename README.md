@@ -21,22 +21,29 @@ panel. Its [HTML source](docs/guide.html) is the file the PDF is rendered from.
 python3 app.py
 ```
 If you have a mac (supreme) you should be fine because it will auto install everything,
-however make sure you have 3.9 < python version < 3.12, otherwise it will blow up
+however make sure you have 3.9 < python version < 3.13, otherwise it will blow up
 
 The first run builds an environment before starting: a `.venv` in the project folder,
 the packages listed in `requirements.txt`, and a clone of openMotor pinned to a known
 commit. It asks for confirmation first and writes nothing outside the project folder.
 The application then opens at `http://localhost:8420`.
 
-Requirements are Python 3.9 to 3.12, and `git`. The upper version bound is a
-consequence of the pinned dependencies: numpy, scipy and scikit-image publish wheels
-up to Python 3.12 only, and later versions cause pip to attempt a source build. Setup
-checks the version before installing anything, and will use a supported interpreter if
-one is installed alongside a newer one.
+Requirements are Python 3.9 to 3.13, and `git`. The upper bound is where the pinned
+wheels stop. `requirements.txt` carries two sets: Python 3.10 and later get numpy 2
+and the versions built for 3.13, while 3.9 keeps numpy 1, which is the last release
+that supports it. Setup checks the version before installing anything, and will use a
+supported interpreter if one is installed alongside a newer one.
 
-A C compiler is optional. openMotor contains one compiled module that BATES
-simulations never call. Without a compiler, setup substitutes a pure-Python stand-in
-that raises an error if a grain geometry ever requires the real one.
+3.14 is not reachable yet. scipy and scikit-image both require 3.11 or later at the
+versions that support it, which is workable, but scikit-fmm publishes no 3.14 wheel at
+any version.
+
+A C++ compiler is needed on macOS and Linux, because scikit-fmm publishes Windows
+wheels only and is built from source everywhere else. `xcode-select --install` covers
+macOS and `apt install build-essential python3-dev` covers Debian. Separately,
+openMotor contains one compiled module that BATES simulations never call; if that one
+fails to build, setup substitutes a pure-Python stand-in which raises an error should a
+grain geometry ever require the real thing.
 
 To build the environment without the confirmation prompt, run `scripts/setup_env.sh`
 or `python3 bootstrap.py --yes`.

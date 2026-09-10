@@ -102,7 +102,10 @@ def test_design_eng_from_a_real_simulation():
 
     # The tabulated curve has to carry the impulse the simulator reported.
     metrics = simulate_motor(motor, timestep=0.002)
-    integrated = float(np.trapz([r[1] for r in rows], [r[0] for r in rows]))
+    # Spelled out rather than np.trapz/np.trapezoid, which numpy renamed
+    # between 1 and 2 and which this suite has to run under both.
+    integrated = sum((a[1] + b[1]) / 2 * (b[0] - a[0])
+                     for a, b in zip(rows, rows[1:]))
     assert integrated == pytest.approx(metrics.total_impulse, rel=0.02)
 
 
