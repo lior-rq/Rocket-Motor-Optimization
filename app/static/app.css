@@ -725,3 +725,10 @@ table.vars.hardware select {
     animation-duration: .001ms !important; animation-iteration-count: 1 !important;
     transition-duration: .001ms !important; }
 }
+
+/* Grain count card: two short numeric fields side by side. */
+.field-row { display: flex; gap: 12px; }
+.field-row .field { flex: 1; min-width: 0; }
+label.check { display: flex; align-items: center; gap: 8px; font-size: 13px;
+  cursor: pointer; }
+.hint.warn { color: var(--warn); }

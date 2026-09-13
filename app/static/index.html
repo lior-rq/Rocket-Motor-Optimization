@@ -75,8 +75,9 @@
         </section>
         <section class="card">
           <h2>Fixed hardware</h2>
-          <p class="hint">Read from the .ric file and never changed, either by the
-            optimizer or by this application.</p>
+          <p class="hint">Read from the .ric file and never changed by this
+            application. The grain count can be handed to the optimizer on the
+            Variables page; the stack length is still held.</p>
           <table class="vars hardware">
             <tbody>
               <tr><td class="var-name">Grain outer diameter</td>
@@ -146,6 +147,23 @@
         </section>
       </div>
       <div class="col">
+        <section class="card">
+          <h2>Grain count</h2>
+          <label class="check"><input type="checkbox" id="gcFree">
+            Let the search choose how many grains</label>
+          <p class="hint" id="gcNote"></p>
+          <div class="field-row" id="gcRange" hidden>
+            <div class="field">
+              <label for="gcMin">Fewest</label>
+              <input type="text" id="gcMin" inputmode="numeric">
+            </div>
+            <div class="field">
+              <label for="gcMax">Most</label>
+              <input type="text" id="gcMax" inputmode="numeric">
+            </div>
+          </div>
+          <p class="hint warn" id="gcWarn" hidden></p>
+        </section>
         <section class="card">
           <h2>Grain cores</h2>
           <div class="field">

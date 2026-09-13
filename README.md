@@ -60,8 +60,8 @@ a generic six-grain KNSB motor.
 
 ## What can be optimised
 
-Grain outer diameter, length, count and the propellant are read from the `.ric` file
-and never modified. Nine dimensions can be varied:
+Grain outer diameter, stack length and the propellant are read from the `.ric` file
+and never modified. Nine dimensions can be varied, plus the grain count:
 
 | Variable | Description |
 |---|---|
@@ -69,6 +69,7 @@ and never modified. Nine dimensions can be varied:
 | `throat` | nozzle throat diameter |
 | `exit` | nozzle exit diameter, floored at 1.15 × throat |
 | `throat_length` | nozzle throat length |
+| grain count | how many equal grains the stack is cut into, within a range; off by default |
 
 Each dimension takes a machining step, 0.05 in by default. The optimiser only returns
 values that fall on that grid. Bounds, objectives and limits are configured in the
@@ -118,6 +119,34 @@ once *I know what I'm doing* is ticked.
 
 Time estimates are not shown until the diagnostic on the settings page has measured
 this machine at these settings, since a rate the program has not measured is a guess.
+
+## Searching the grain count
+
+Every limit in the application is a peak limit, and the grain count sets the
+peak-to-mean ratio of the burn: more, shorter grains means more end faces and a more
+regressive burn; fewer, longer grains burns progressive. Burn area is equal at
+ignition and burnout when a grain is (3D + d)/2 long, so the count that lands near
+that length is usually the one that packs the most impulse under a pressure or Kn
+ceiling. The count is therefore worth searching, but it is not a dimension like the
+others: a design vector at five grains and one at eight have different lengths.
+
+The stack length is held and cut into every count in the range. Each count is a
+separate search over the fixed-count space, and the search internals never learn
+that the count exists. Three passes keep that affordable:
+
+1. **Screen.** The closed-form Kn and port/throat checks run per count. A count that
+   no core and throat can make legal is dropped before any simulation.
+2. **Short search.** Every surviving count gets a search of ten generations at the
+   preset's population. Counts are ranked on the hypervolume of their verified
+   front, or on the best legal score for a single objective.
+3. **Full search.** The best two counts, plus any within ten percent of the leader,
+   get the full preset budget, seeded with their short-search survivors. The
+   reported designs are the non-dominated set across every count, compared on
+   metrics alone.
+
+A free count frees every core, and mandrel groups are unavailable, since both need a
+fixed count to mean anything. The report and the diagnostics profile list every
+count with its outcome.
 
 ## Two properties that reduce the search space
 

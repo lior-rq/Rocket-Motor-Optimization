@@ -5,6 +5,7 @@ All the work lives in ``rocketopt.runner``; this translates it to and from JSON.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 
 from rocketopt.ric import load_ric, motor_path, save_ric
 from rocketopt.runner import (apply_hardware, build_space, default_spec,
+                              grain_counts,
                               describe_design, jsonable)
 from rocketopt.simulate import PA_PER_PSI, curves, simulate_motor
 from rocketopt.sizing import reduction_chain, size_space
@@ -83,6 +85,7 @@ def motor_summary(motor: Dict) -> Dict:
     return {
         "name": STATE["name"],
         "grain_count": len(grains),
+        "stack_length": sum(g["properties"]["length"] for g in grains),
         "grain_diameter": grains[0]["properties"]["diameter"],
         "grain_lengths": [g["properties"]["length"] for g in grains],
         "cores": [g["properties"]["coreDiameter"] for g in grains],
@@ -137,7 +140,9 @@ def get_defaults() -> JSONResponse:
 class Hardware(BaseModel):
     """Only the ends are adjustable. Grain outer diameter, length and count are
     read from the .ric and never overridden -- they are the tube and the mould,
-    and an app that quietly changes them is describing a motor you do not own."""
+    and an app that quietly changes them is describing a motor you do not own.
+    The optimiser may re-cut the stack into another count, but only when the
+    user frees the count and sets its range on the Variables page."""
 
     inhibited_ends: Optional[str] = None
 
@@ -213,10 +218,10 @@ def validate(payload: SpecPayload) -> JSONResponse:
     found = spec.problems()
     notes = []
     try:
-        space = build_space(spec, motor)
-        baseline = space.from_motor(motor)
+        space = build_space(spec, motor, len(motor["grains"]))
+        baseline = space.from_motor(space.base)
         motor_now = space.to_motor(baseline)
-        for i, grain in enumerate(motor["grains"]):
+        for i, grain in enumerate(space.base["grains"]):
             actual = grain["properties"]["coreDiameter"]
             landed = motor_now["grains"][i]["properties"]["coreDiameter"]
             if abs(actual - landed) > 1e-6:
@@ -228,8 +233,13 @@ def validate(payload: SpecPayload) -> JSONResponse:
     except Exception as exc:
         found.append(("variables", str(exc)))
     estimate = _estimate(spec)
+    counts = grain_counts(spec, motor)
     sizing = size_space(spec, len(motor["grains"]),
                         evaluated=estimate["simulations"])
+    if len(counts) > 1:
+        # Every count is its own space; the total is their sum, and the
+        # reduction chain is quoted for the loaded count alone.
+        sizing = _size_counts(spec, motor, counts, estimate["simulations"], sizing)
     try:
         sizing["reduction"] = _plain_counts(reduction_chain(spec, motor))
     except Exception:
@@ -267,6 +277,35 @@ def validate(payload: SpecPayload) -> JSONResponse:
                          "notes": notes,
                          "estimate": estimate, "sizing": sizing,
                          "preset_seconds": presets})
+
+
+def _size_counts(spec: RunSpec, motor: Dict, counts, evaluated: int,
+                 loaded: Dict) -> Dict:
+    """The design space summed over every grain count in the range."""
+    from rocketopt.sizing import _duration, _humanise, _one_in
+
+    per_count = []
+    total = 0
+    continuous = False
+    for n in counts:
+        block = size_space(spec, n, evaluated=evaluated)
+        per_count.append({"n": n, "total": block.get("total"),
+                          "total_text": block.get("total_text")})
+        if block.get("total") is None:
+            continuous = True
+        else:
+            total += int(block["total"])
+    sizing = dict(loaded)
+    sizing["counts"] = per_count
+    sizing["continuous"] = continuous
+    sizing["total"] = None if continuous else total
+    sizing["total_text"] = _humanise(None if continuous else total)
+    sizing["free_variables"] = loaded.get("free_variables", 0) + 1
+    if total and not continuous:
+        sizing["fraction"] = evaluated / total
+        sizing["fraction_text"] = _one_in(total / evaluated) if evaluated else ""
+        sizing["brute_force_text"] = _duration(total / 32.0)
+    return sizing
 
 
 def _plain_counts(chain: Dict) -> Dict:
@@ -351,6 +390,10 @@ def _calibrate() -> None:
 
 
 def _start_calibration() -> None:
+    # Spawned pool workers re-import this module. They MUST NOT calibrate:
+    # each would start its own pool, and the tree grows without bound.
+    if multiprocessing.current_process().name != "MainProcess":
+        return
     threading.Thread(target=_calibrate, name="calibrate", daemon=True).start()
 
 
@@ -435,6 +478,20 @@ def _estimate(spec: RunSpec) -> Dict:
             # Multi-objective verifies its front once per seed.
             verified += 40 * budget["seeds"]
 
+    # A searched grain count multiplies the work: a short first stage for
+    # every count, then the full budget for each count carried forward.
+    counts = grain_counts(spec, STATE["motor"]) if STATE.get("motor") else [1]
+    stage_one = 0
+    carried = 1
+    if len(counts) > 1:
+        gc = spec.grain_count
+        stage_one = budget["pop"] * gc.stage_generations * len(counts)
+        carried = min(len(counts), gc.carry)
+        searched = searched * carried + stage_one
+        predicted *= carried
+        verified *= carried
+        overhead *= carried
+
     real = searched + verified
     # Verification runs at the fine timestep, several times slower per run.
     seconds = (searched / _sim_rate(spec)
@@ -454,6 +511,8 @@ def _estimate(spec: RunSpec) -> Dict:
             "openmotor_runs": int(real), "model_runs": int(predicted),
             "rate": round(_sim_rate(spec), 1),
             "rate_source": THROUGHPUT["source"],
+            "grain_counts": len(counts), "carried": carried,
+            "stage_one": int(stage_one),
             "correction": round(jobs.factor(_shape(spec)), 2),
             # Anchored to a finished run rather than a short benchmark.
             "calibrated": jobs.has_seen(_shape(spec))}
@@ -630,6 +689,8 @@ def job_results(job_id: str) -> JSONResponse:
 class ExportPayload(BaseModel):
     spec: Dict
     x: list
+    #: Grain count of the design, when a run searched the count.
+    n_grains: Optional[int] = None
     name: Optional[str] = None
 
 
@@ -638,7 +699,7 @@ def export_design(payload: ExportPayload) -> Response:
     """Hands back a .ric the user can open straight in openMotor."""
     motor = _require_motor()
     spec = RunSpec.from_dict(payload.spec)
-    space = build_space(spec, motor)
+    space = build_space(spec, motor, payload.n_grains)
     import numpy as np
 
     built = space.to_motor(np.asarray(payload.x, dtype=float))
@@ -656,11 +717,15 @@ def export_design(payload: ExportPayload) -> Response:
 class CurvePayload(BaseModel):
     spec: Dict
     x: list
+    #: Grain count of the design, when a run searched the count.
+    n_grains: Optional[int] = None
 
 
 class RobustnessRequest(BaseModel):
     spec: Dict
     x: list
+    #: Grain count of the design, when a run searched the count.
+    n_grains: Optional[int] = None
     tolerances: list
     samples: int = 400
 
@@ -670,7 +735,7 @@ def robustness(payload: RobustnessRequest) -> JSONResponse:
     """How often this design stays legal once it is actually built."""
     motor = _require_motor()
     spec = RunSpec.from_dict(payload.spec)
-    space = build_space(spec, motor)
+    space = build_space(spec, motor, payload.n_grains)
     import numpy as np
 
     built = space.to_motor(np.asarray(payload.x, dtype=float))
@@ -687,7 +752,7 @@ def design_curves(payload: CurvePayload) -> JSONResponse:
     """Time series for a design the user clicked on in the trade-off plot."""
     motor = _require_motor()
     spec = RunSpec.from_dict(payload.spec)
-    space = build_space(spec, motor)
+    space = build_space(spec, motor, payload.n_grains)
     import numpy as np
 
     x = np.asarray(payload.x, dtype=float)

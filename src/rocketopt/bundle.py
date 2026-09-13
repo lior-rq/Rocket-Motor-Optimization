@@ -141,7 +141,9 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
                 figures: Dict[str, Path]) -> str:
     designs = run.designs
     metrics = run.result.get("stats", {}).get("objective_labels", [])
-    grain = base_motor["grains"][0]["properties"]
+    # The design's own stack: a run may have cut it into a different count.
+    grains = (design.get("motor") or base_motor)["grains"]
+    grain = grains[0]["properties"]
 
     cores = "".join(
         "<tr><td>Grain {}</td><td class=\"n\">{}</td></tr>".format(i + 1, inches_exact(c))
@@ -239,7 +241,7 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
   removed. Lior&#8217;s Really Good&#8482; Rocket Optimizer &middot; created by
   Lior Benshoshan
 </footer>""".format(
-        n=len(base_motor["grains"]), d=inches(grain["diameter"]),
+        n=len(grains), d=inches(grain["diameter"]),
         l=inches(grain["length"]), prop=esc(base_motor["propellant"]["name"]),
         title=esc(title), label=esc(run.label), trade=esc(trade),
         cores=cores, geom=geom, perf=perf, bars=bars, figures=figure_blocks)

@@ -12,10 +12,10 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import numpy as np
 
 from .design import DesignSpace
 from .ric import save_ric
+from .runner import motor_for
 
 #: Written on every rewrite so it is obvious the folder is disposable.
 README = """This folder is the output of the last optimisation, and only the last one.
@@ -68,7 +68,7 @@ def write_run(result, base_motor: Dict, space: Optional[DesignSpace],
                            if c.isalnum()) or "design"
             target = motors / "{:02d}-{}.ric".format(index + 1, name)
             try:
-                save_ric(target, space.to_motor(np.asarray(x, dtype=float)))
+                save_ric(target, motor_for(design, space))
                 written.append(target)
             except Exception:
                 # One design failing to serialise must not cost the rest.

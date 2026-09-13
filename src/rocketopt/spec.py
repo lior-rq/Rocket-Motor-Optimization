@@ -148,6 +148,77 @@ class OrderingSpec:
         )
 
 
+@dataclass
+class GrainCountSpec:
+    """Whether the stack may be cut into a different number of grains.
+
+    The stack length is held and divided equally, so every count is the same
+    propellant column with more or fewer end faces. Off, the .ric's count is
+    used as it is.
+    """
+
+    free: bool = False
+    n_min: int = 4
+    n_max: int = 8
+    #: Generations each count gets in the first stage, before the ranking.
+    stage_generations: int = 10
+    #: Counts carried into the full search. Any count whose first-stage score
+    #: is within ``carry_within`` of the leader's is carried as well.
+    carry: int = 2
+    carry_within: float = 0.10
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict]) -> "GrainCountSpec":
+        data = data or {}
+        return cls(
+            free=bool(data.get("free", False)),
+            n_min=max(1, int(data.get("n_min", 4) or 4)),
+            n_max=max(1, int(data.get("n_max", 8) or 8)),
+            stage_generations=max(2, int(data.get("stage_generations", 10) or 10)),
+            carry=max(1, int(data.get("carry", 2) or 2)),
+            carry_within=float(data.get("carry_within", 0.10) or 0.0),
+        )
+
+    def counts(self, loaded: int) -> List[int]:
+        """Grain counts to search. The loaded count alone when not free."""
+        if not self.free:
+            return [int(loaded)]
+        return list(range(int(self.n_min), int(self.n_max) + 1))
+
+
+#: More grains than this and a stack stops being a stack.
+MAX_GRAIN_COUNT = 12
+
+
+def core_specs(spec: "RunSpec", n_grains: int) -> List[VariableSpec]:
+    """Core variables for ``n_grains`` grains, one per slot.
+
+    A count above the loaded one has no spec of its own, so the first core
+    stands in as the template. A free count frees every core: pinning grain 3
+    means nothing when there may be no grain 3.
+    """
+    by_name = {v.name: v for v in spec.variables}
+    template = next((v for v in spec.variables if v.name.startswith("core")), None)
+    if template is None:
+        raise ValueError("no core variable in the spec")
+    out = []
+    for i in range(n_grains):
+        name = "core_{}".format(i + 1)
+        found = by_name.get(name)
+        if found is None:
+            found = VariableSpec(**{**template.to_dict(), "name": name,
+                                    "label": "Grain {} core".format(i + 1),
+                                    "free": True, "fixed_value": None})
+        elif spec.grain_count.free and not found.free:
+            found = VariableSpec(**{**found.to_dict(), "free": True,
+                                    "fixed_value": None})
+        out.append(found)
+    return out
+
+
 #: Budget and search count per preset. Measured on the reference configuration:
 #: the best motor stops improving a little past 2,000 simulations, and extra
 #: independent searches stop paying at about five.
@@ -176,6 +247,7 @@ class RunSpec:
     objectives: List[ObjectiveSpec] = field(default_factory=list)
     constraints: List[ConstraintSpec] = field(default_factory=list)
     ordering: OrderingSpec = field(default_factory=OrderingSpec)
+    grain_count: GrainCountSpec = field(default_factory=GrainCountSpec)
     effort: str = "standard"
     #: Total simulations to spend, across every seed. None follows the preset.
     budget_simulations: Optional[int] = None
@@ -258,6 +330,18 @@ class RunSpec:
         if self.mode == "pareto" and len(self.enabled_objectives) < 2:
             found.append(("settings",
                           "A trade-off map needs at least two objectives."))
+        gc = self.grain_count
+        if gc.free:
+            if gc.n_max < gc.n_min:
+                found.append(("variables",
+                              "Grain count: the maximum must be at least the minimum."))
+            if gc.n_max > MAX_GRAIN_COUNT:
+                found.append(("variables",
+                              "Grain count: at most {} grains.".format(MAX_GRAIN_COUNT)))
+            if self.ordering.mode == "paired":
+                found.append(("variables",
+                              "Mandrel groups need a fixed grain count. Fix the count "
+                              "or choose another core rule."))
         return found
 
     def validate(self) -> List[str]:
@@ -270,6 +354,7 @@ class RunSpec:
             "objectives": [o.to_dict() for o in self.objectives],
             "constraints": [c.to_dict() for c in self.constraints],
             "ordering": self.ordering.to_dict(),
+            "grain_count": self.grain_count.to_dict(),
             "effort": self.effort,
             "budget_simulations": self.budget_simulations,
             "seeds": self.seeds,
@@ -289,6 +374,7 @@ class RunSpec:
             objectives=[ObjectiveSpec.from_dict(o) for o in data.get("objectives", [])],
             constraints=[ConstraintSpec.from_dict(c) for c in data.get("constraints", [])],
             ordering=OrderingSpec.from_dict(data.get("ordering", {})),
+            grain_count=GrainCountSpec.from_dict(data.get("grain_count")),
             effort=data.get("effort", "standard"),
             budget_simulations=(int(data["budget_simulations"])
                                 if data.get("budget_simulations") else None),

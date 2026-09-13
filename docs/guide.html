@@ -242,8 +242,10 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <span class="panel-name">Fixed hardware</span>
       <h3>Confirm the case</h3>
       <p>Grain outer diameter, length and count are read from the file and shown
-      greyed out. These represent the case and the mould, so they are neither optimised
-      nor editable here. They can be changed in openMotor and the file reloaded.</p>
+      greyed out. These represent the case and the mould, so they are not editable
+      here. They can be changed in openMotor and the file reloaded. The count alone
+      can be handed to the optimiser on the Variables page; the stack length is still
+      held.</p>
       <p>Inhibited ends is the one live control in this panel, being a casting choice
       rather than a hardware constraint. Where a value has been overridden, the panel
       reports <strong>modified from file</strong> and offers <strong>Reset to
@@ -265,6 +267,29 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <p>The buttons below the table set every step at once. The default is
       <code>0.05&Prime;</code>. <code>0.01&Prime;</code>
       is two decimal places, which is the finest tolerance commonly held.</p>
+    </li>
+
+    <li>
+      <span class="panel-name">Grain count</span>
+      <h3>Let the search cut the stack</h3>
+      <p>Off by default, so the file's count is used as it is. Ticked, the stack
+      length is held and cut into every count from <strong>Fewest</strong> to
+      <strong>Most</strong>, each grain the same length. The propellant column is the
+      same at every count; what changes is the number of burning end faces, and with
+      it how progressive the burn is. Burn area is equal at ignition and burnout when
+      a grain is (3D&nbsp;+&nbsp;d)/2 long, so on most stacks the count that hits that
+      length is the one that packs the most impulse under a pressure or Kn limit.</p>
+      <p>Every count is checked on paper first, and any that no core and throat can
+      make legal is dropped. The rest each get a short search of ten generations; the
+      best two go on to the full search, along with any count within ten percent of
+      the leader. The results page lists every count and what became of it under
+      <em>Optimizer Diagnostics</em>. The estimate on the settings page includes the
+      short pass and the counts carried.</p>
+      <p>Two rules follow from a free count. Every core is free, since pinning grain
+      three means nothing when there may be no grain three. Mandrel groups are not
+      available, since they need a fixed count to divide. The page warns when a count
+      would make grains longer than three diameters or shorter than half of one; the
+      model does not care, but a caster might.</p>
     </li>
 
     <li>

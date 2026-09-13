@@ -15,7 +15,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from .spec import RunSpec
+from .spec import RunSpec, core_specs
 from .units import M_PER_IN as IN
 
 
@@ -38,9 +38,11 @@ def _multiset(values: int, slots: int) -> int:
 
 def core_combinations(spec: RunSpec, n_grains: int) -> Dict:
     """How many distinct core arrangements the ordering rule leaves."""
-    cores = [v for v in spec.variables if v.name.startswith("core")][:n_grains]
-    if not cores:
+    # One spec per grain, whatever count is being sized: a count above the
+    # loaded one borrows the first core's bounds.
+    if not any(v.name.startswith("core") for v in spec.variables):
         return {"count": 1, "exact": True, "note": ""}
+    cores = core_specs(spec, n_grains)
 
     free = [c for c in cores if c.free]
     if not free:

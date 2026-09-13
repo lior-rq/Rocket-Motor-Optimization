@@ -21,7 +21,7 @@ import numpy as np
 from .design import DesignSpace
 from .pdf import NoBrowser, html_to_pdf
 from .report_style import CSS, FONT_LINK
-from .runner import build_space
+from .runner import build_space, motor_for
 from .simulate import PA_PER_PSI, curves, simulate_motor
 from .spec import OPTIMISABLE_METRICS, RunSpec
 from .units import KG_M2S_PER_LB_IN2S as LB
@@ -296,7 +296,7 @@ def make_figures(runs: Sequence[ReportRun], base_motor: Dict,
             fig, ax = plt.subplots(figsize=(8.4, 4.6))
             space = build_space(run.spec, base_motor)
             for i, o in enumerate(options, 1):
-                trace = curves(space.to_motor(np.array(o["x"])), timestep=0.002)
+                trace = curves(motor_for(o, space), timestep=0.002)
                 ax.plot(trace["time"], trace["thrust"],
                         color=ramp[(i - 1) % len(ramp)], linewidth=1.9,
                         label="{} · {:,.0f} {}".format(i, display(ax_x, o[ax_x]),
@@ -463,12 +463,20 @@ def _verdicts(runs: Sequence[ReportRun]) -> str:
 
 def _fixed_section(runs, base_motor, grain, nozzle) -> str:
     spec = runs[0].spec
-    fixed = [("Grain count", str(len(base_motor["grains"]))),
-             ("Grain outer diameter", inches(grain["diameter"]) + " in"),
-             ("Grain length", "{} in each · {} in total".format(
-                 inches(grain["length"]),
-                 inches(grain["length"] * len(base_motor["grains"])))),
-             ("Inhibited ends", esc(grain.get("inhibitedEnds", "Neither"))),
+    n_loaded = len(base_motor["grains"])
+    stack = sum(g["properties"]["length"] for g in base_motor["grains"])
+    counted = any(r.spec.grain_count.free for r in runs)
+    if counted:
+        gc = spec.grain_count
+        fixed = [("Stack length", "{} in total, cut into {}–{} grains by the "
+                  "search".format(inches(stack), gc.n_min, gc.n_max)),
+                 ("Grain outer diameter", inches(grain["diameter"]) + " in")]
+    else:
+        fixed = [("Grain count", str(n_loaded)),
+                 ("Grain outer diameter", inches(grain["diameter"]) + " in"),
+                 ("Grain length", "{} in each · {} in total".format(
+                     inches(grain["length"]), inches(stack)))]
+    fixed += [("Inhibited ends", esc(grain.get("inhibitedEnds", "Neither"))),
              ("Propellant", esc(base_motor["propellant"]["name"])),
              ("Nozzle convergence / divergence", "{:.0f}° / {:.0f}°".format(
                  nozzle["convAngle"], nozzle["divAngle"])),
@@ -494,6 +502,9 @@ def _fixed_section(runs, base_motor, grain, nozzle) -> str:
 
     variables = [(name, describe(var))
                  for name, var in collapse(runs[0].spec.variables)]
+    if counted:
+        variables.insert(0, ("Grain count", "{} – {} grains, stack length held"
+                             .format(spec.grain_count.n_min, spec.grain_count.n_max)))
 
     def dl(pairs):
         return '<dl class="spec">{}</dl>'.format("".join(
@@ -590,6 +601,8 @@ dA/dd = {n}π·(L − d) &gt; 0 for every d &lt; {L:.2f} in</div>""".format(
     is what stands between this motor and a legal one.</p></div>""".format(
             kn=sweep["kn_limit"], need=sweep["min_throat_in"],
             short=sweep["min_throat_in"] - sweep["throat_in"]))
+    if run.spec.grain_count.free:
+        parts.append(_counts_section(run))
     parts.append('</section><hr class="rule">')
     return "\n".join(parts)
 
@@ -600,7 +613,9 @@ def _feasible_section(run, key, base_motor, figures) -> str:
     metrics = run.result.get("stats", {}).get("objective_labels", ["initial_thrust"])
     pick = balanced_index(options, metrics)
 
-    head = ["#", "Class"]
+    counts = sorted({int(o.get("n_grains", 0) or 0) for o in options})
+    counted = len(counts) > 1 or run.spec.grain_count.free
+    head = ["#", "Class"] + (["Grains"] if counted else [])
     head += ["{}<span>{}</span>".format(metric_label(m), metric_unit(m)) for m in metrics]
     head += ["ISP<span>s</span>", "Burn<span>s</span>", "Propellant<span>kg</span>",
              "Peak<span>psi</span>", "Peak<span>Kn</span>", "Flux<span>lb/in²s</span>"]
@@ -608,6 +623,8 @@ def _feasible_section(run, key, base_motor, figures) -> str:
     for i, o in enumerate(options, 1):
         cells = ['<td class="idx">{}</td>'.format(i),
                  '<td class="des">{}</td>'.format(esc(o.get("designation", "")))]
+        if counted:
+            cells.append('<td class="n">{}</td>'.format(o.get("n_grains", "")))
         for j, m in enumerate(metrics):
             cls = "n strong" if j == 0 else "n"
             cells.append('<td class="{}">{:,.0f}</td>'.format(cls, display(m, o[m])))
@@ -632,8 +649,13 @@ def _feasible_section(run, key, base_motor, figures) -> str:
                         x=(o["exit"] / o["throat"]) ** 2, pt=o["port_throat"]))
 
     best = options[pick]
-    detail = [("Designation", esc(best.get("designation", ""))),
-              ("Core diameters", " · ".join(inches(c) for c in best["cores"]) + " in"),
+    detail = [("Designation", esc(best.get("designation", "")))]
+    if counted:
+        lengths = best.get("grain_lengths") or []
+        detail.append(("Grains", "{} × {} in".format(
+            best.get("n_grains", len(best["cores"])),
+            inches(lengths[0]) if lengths else "?")))
+    detail += [("Core diameters", " · ".join(inches(c) for c in best["cores"]) + " in"),
               ("Throat / exit / length", "{} / {} / {} in".format(
                   inches(best["throat"]), inches(best["exit"]),
                   inches(best.get("throat_length", 0.0))))]
@@ -665,12 +687,14 @@ def _feasible_section(run, key, base_motor, figures) -> str:
   {curves}
   <h3 style="margin-top:34px">The balanced pick</h3>
   <dl class="spec">{detail}</dl>
+  {counts}
 </section>
 <hr class="rule">""".format(
         label=esc(run.label), n=len(designs), n2=len(options), pick=pick + 1,
         head="".join("<th class=\"n\">{}</th>".format(h) if h != "Class" else "<th>Class</th>"
                      for h in head),
         rows="".join(rows), geom="".join(geom),
+        counts=_counts_section(run) if counted else "",
         front='<figure><img src="{}" alt="Trade-off curve of the legal designs."><figcaption>'
               'Every legal design found, with the tabulated options marked.</figcaption></figure>'.format(
                   data_uri(front_fig)) if front_fig else "",
@@ -678,6 +702,63 @@ def _feasible_section(run, key, base_motor, figures) -> str:
                '<figcaption>The same options as thrust curves.</figcaption></figure>'.format(
                    data_uri(curve_fig)) if curve_fig else "",
         detail="".join("<dt>{}</dt><dd>{}</dd>".format(esc(k), v) for k, v in detail))
+
+
+def _counts_section(run: ReportRun) -> str:
+    """How each grain count fared: screened out, tried briefly, or searched.
+
+    The stack length was held and cut into every count in the range, so this
+    is the same propellant column with more or fewer end faces.
+    """
+    info = run.result.get("stats", {}).get("grain_counts") or {}
+    stacks = info.get("stacks") or []
+    if not stacks:
+        return ""
+    multi = len(run.result.get("stats", {}).get("objective_labels", [])) > 1
+    rows = []
+    for st in stacks:
+        s1 = st.get("stage1") or {}
+        if st.get("dropped"):
+            outcome, score = "screened out", "—"
+            note = st["dropped"]
+        else:
+            if s1.get("score") is not None:
+                score = "{:.3f}".format(s1["score"])
+            elif s1.get("near") is not None:
+                score = "no legal design"
+            else:
+                score = "—"
+            if st.get("carried"):
+                outcome = "searched in full"
+                note = "{} legal design{}".format(
+                    st.get("designs", 0), "" if st.get("designs", 0) == 1 else "s")
+            else:
+                outcome = "tried, not carried"
+                note = ("ranked {} of {} after {} generations".format(
+                    s1.get("rank"), len([x for x in stacks if not x.get("dropped")]),
+                    info.get("stage_generations", "")) if s1.get("rank") else "")
+        rows.append(
+            '<tr{hi}><td class="idx">{n}</td><td class="n">{l}</td>'
+            '<td class="{cls}">{outcome}</td><td class="n">{score}</td>'
+            '<td class="des">{note}</td><td class="n">{sims:,}</td></tr>'.format(
+                hi=' class="pick"' if st.get("carried") else "", n=st["n"],
+                l=inches(st.get("grain_length", 0.0)),
+                cls="strong" if st.get("carried") else "des",
+                outcome=outcome, score=score, note=esc(note),
+                sims=int(st.get("simulations", 0))))
+    metric = "hypervolume of its front" if multi else "best legal score"
+    return """<h3 style="margin-top:34px">Grain counts</h3>
+  <div class="prose"><p>The {stack} in stack was cut into each count below. Every count
+  was checked on paper first, then given {gens} generations; the best {carry} went on to
+  the full search. Score is the {metric} after those {gens} generations, on the same
+  axes for every count.</p></div>
+  <div class="scroll"><table>
+    <thead><tr><th class="n">Grains</th><th class="n">Length<span>in each</span></th>
+    <th>Outcome</th><th class="n">Score</th><th>Why</th>
+    <th class="n">Simulations</th></tr></thead><tbody>{rows}</tbody></table></div>""".format(
+        stack=inches(info.get("stack_length", 0.0)),
+        gens=info.get("stage_generations", ""), carry=len(info.get("carried", [])),
+        metric=metric, rows="".join(rows))
 
 
 def _footer(runs: Sequence[ReportRun]) -> str:

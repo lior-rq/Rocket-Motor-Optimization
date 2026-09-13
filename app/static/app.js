@@ -289,10 +289,14 @@ const App = (() => {
     const vars = state.spec.variables || [];
     const free = vars.filter(v => v.free);
     const steps = [...new Set(free.map(v => v.step || 0))];
+    const gc = state.spec.grain_count || {};
+    const countRow = gc.free
+      ? `<div class="free-row"><span class="k">Grain count</span>
+         <span class="v">${gc.n_min} \u2013 ${gc.n_max}</span></div>` : '';
     host.innerHTML = `
-      <div class="big"><span class="n">${free.length}</span>
-        <span class="of">of ${vars.length} free</span></div>
-      <div class="free-rows">${vars.map(v => `
+      <div class="big"><span class="n">${free.length + (gc.free ? 1 : 0)}</span>
+        <span class="of">of ${vars.length + (gc.free ? 1 : 0)} free</span></div>
+      <div class="free-rows">${countRow}${vars.map(v => `
         <div class="free-row ${v.free ? '' : 'held'}">
           <span class="k">${v.label || v.name}</span>
           <span class="v">${v.free
@@ -305,8 +309,56 @@ const App = (() => {
         : 'Mixed machining grids across the free dimensions.'}</p>`;
   }
 
+  //: Grain lengths a builder can cast and handle, as a multiple of the outer
+  //: diameter. Outside this the count is allowed, but the page says so.
+  const GRAIN_LD = [0.5, 3.0];
+
+  function renderGrainCount() {
+    const free = $('#gcFree');
+    if (!free || !state.motor) return;
+    const spec = state.spec;
+    if (!spec.grain_count) spec.grain_count = { free: false, n_min: 4, n_max: 8 };
+    const gc = spec.grain_count;
+    const m = state.motor;
+    const stack = m.stack_length || m.grain_lengths.reduce((a, b) => a + b, 0);
+    const bore = m.grain_diameter;
+    free.checked = !!gc.free;
+    $('#gcRange').hidden = !gc.free;
+    $('#gcMin').value = String(gc.n_min);
+    $('#gcMax').value = String(gc.n_max);
+    const note = $('#gcNote');
+    if (!gc.free) {
+      note.textContent = `Held at ${m.grain_count} grains of ${fmtLen(m.grain_lengths[0])}, as the file has it.`;
+    } else {
+      note.innerHTML = `The ${fmtLen(stack)} stack is cut into every count from
+        ${gc.n_min} to ${gc.n_max} (${fmtLen(stack / gc.n_max)} to ${fmtLen(stack / gc.n_min)}
+        each). Each count gets a short search; the best go on to the full one.`;
+    }
+    const warn = $('#gcWarn');
+    const ld = n => stack / n / bore;
+    const long = gc.free && ld(gc.n_min) > GRAIN_LD[1];
+    const short = gc.free && ld(gc.n_max) < GRAIN_LD[0];
+    warn.hidden = !(long || short);
+    warn.textContent = long
+      ? `${gc.n_min} grains means ${fmtLen(stack / gc.n_min)} each, ${ld(gc.n_min).toFixed(1)}× the diameter. Long grains are hard to cast and handle; the model does not care.`
+      : short
+        ? `${gc.n_max} grains means ${fmtLen(stack / gc.n_max)} each, ${ld(gc.n_max).toFixed(1)}× the diameter. Very short grains burn mostly on their faces; the model allows it.`
+        : '';
+    free.onchange = () => { gc.free = free.checked; renderVariables(); validate(); };
+    const bound = (id, key) => {
+      $(id).onchange = () => {
+        const v = parseInt($(id).value, 10);
+        if (!isNaN(v) && v > 0) gc[key] = v;
+        if (gc.n_max < gc.n_min) gc[key === 'n_min' ? 'n_max' : 'n_min'] = gc[key];
+        renderVariables(); validate();
+      };
+    };
+    bound('#gcMin', 'n_min'); bound('#gcMax', 'n_max');
+  }
+
   function renderVariables() {
     renderFreeSummary();
+    renderGrainCount();
     const body = $('#varRows');
     body.innerHTML = '';
     state.spec.variables.forEach((v, i) => {
@@ -527,6 +579,7 @@ const App = (() => {
     const res = await fetch('/api/robustness', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ spec: state.results.spec || state.spec, x: ctx.design.x,
+                             n_grains: ctx.design.n_grains || null,
                              tolerances: state.tolerances, samples: 400 })
     });
     if (!res.ok) { node.innerHTML = '<p class="sub">Could not run the check.</p>'; return; }
@@ -1077,9 +1130,14 @@ const App = (() => {
       renderSizing(data.sizing);
       if (state.step === SETTINGS) renderEffort();
       const est = data.estimate || {};
+      const counts = est.grain_counts > 1
+        ? ` First a ${est.stage_one.toLocaleString()}-simulation pass across
+           <strong>${est.grain_counts}</strong> grain counts, then the full search on the
+           best ${est.carried}.`
+        : '';
       $('#budgetSplit').innerHTML = est.seeds
         ? `<strong>${est.seeds}</strong> search${est.seeds === 1 ? '' : 'es'} of
-           ${est.pop} × ${est.gen}, merged into one front.`
+           ${est.pop} × ${est.gen}, merged into one front.${counts}`
         : '';
       // Predictions and burns cost wildly different amounts; quoting one
       // total made a surrogate run look an hour long when it takes minutes.
@@ -1114,6 +1172,8 @@ const App = (() => {
     const num = b => b && b.count_exact
       ? Number(b.count_exact).toLocaleString()
       : (b && b.count === null ? 'continuous' : '—');
+    if (sizing.counts) add('Grain counts', String(sizing.counts.length),
+      sizing.counts.map(c => `${c.n} grains: ${supExp(c.total_text || '—')}`).join(' · '));
     if (sizing.cores) add('Core arrangements', num(sizing.cores), sizing.cores.note);
     if (sizing.nozzle) add('Throat + exit', num(sizing.nozzle), sizing.nozzle.note);
     (sizing.others || []).forEach(o =>
@@ -1249,9 +1309,12 @@ const App = (() => {
   function renderLive(t) {
     const gen = t.generation || 0;
     const total = t.total_generations || 0;
-    $('#liveTitle').textContent = t.n_seeds > 1
-      ? `Search ${t.seed_index + 1} of ${t.n_seeds}`
-      : 'Searching';
+    const grains = t.n_grains ? ` \u00b7 ${t.n_grains} grains` : '';
+    $('#liveTitle').textContent = t.stage === 'stage1'
+      ? `Trying ${t.n_grains} grains (${t.seed_index + 1} of ${t.n_seeds})`
+      : t.n_seeds > 1
+        ? `Search ${t.seed_index + 1} of ${t.n_seeds}${grains}`
+        : 'Searching' + grains;
     // The claim "actually been simulated" is only true on the simulator path;
     // in trade-off mode these are model predictions, verified later.
     const dot = t.surrogate
@@ -1520,6 +1583,7 @@ const App = (() => {
       robustness: state.robustness,
       onCheckRobustness: checkRobustness,
       searched: (r.stats && r.stats.searched) || [],
+      grainCounts: (r.stats && r.stats.grain_counts) || null,
       selected: state.selected,
       axes
     };
@@ -1559,7 +1623,8 @@ const App = (() => {
       try {
         const res = await fetch('/api/curves', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ spec: state.spec, x: design.x })
+          body: JSON.stringify({ spec: state.spec, x: design.x,
+                                 n_grains: design.n_grains || null })
         });
         if (res.ok) {
           const full = await res.json();
@@ -1592,6 +1657,7 @@ const App = (() => {
     const res = await fetch('/api/export', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ spec: state.spec, x: design.x,
+                             n_grains: design.n_grains || null,
                              name: 'optimized_' + (design.designation || index + 1) })
     });
     if (!res.ok) { toast('Export failed.'); return; }

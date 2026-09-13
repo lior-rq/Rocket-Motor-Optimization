@@ -27,14 +27,16 @@ def describe_spec(spec: RunSpec) -> str:
     free = [v.name for v in spec.variables if v.free]
     cores = sum(1 for n in free if n.startswith("core"))
     nozzle = [n for n in free if not n.startswith("core")]
+    gc = spec.grain_count
+    counts = ", {}-{} grains".format(gc.n_min, gc.n_max) if gc.free else ""
     if cores and not nozzle:
-        return "Cores only, nozzle fixed"
+        return "Cores only, nozzle fixed" + counts
     if cores and nozzle:
-        return "Cores plus {} nozzle dimension{}".format(
-            len(nozzle), "" if len(nozzle) == 1 else "s")
+        return "Cores plus {} nozzle dimension{}{}".format(
+            len(nozzle), "" if len(nozzle) == 1 else "s", counts)
     if nozzle:
-        return "Nozzle only"
-    return "No free dimensions"
+        return "Nozzle only" + counts
+    return "No free dimensions" + counts
 
 
 @dataclass
@@ -216,18 +218,20 @@ class JobRegistry:
         budget = spec.budget
 
         def telemetry(snapshot: Dict) -> None:
-            # A generation is one population, so the count follows the grid the
-            # budget already fixes rather than needing the optimiser to report.
-            done = ((snapshot["seed_index"] * budget["gen"]
+            # The runner counts across every grain count and stage it plans;
+            # older snapshots without a count follow the budget's grid.
+            if snapshot.get("simulations_done") is None:
+                snapshot["simulations_done"] = (
+                    (snapshot["seed_index"] * budget["gen"]
                      + snapshot["generation"]) * budget["pop"])
+                snapshot["simulations_total"] = budget["total"]
+            done = snapshot["simulations_done"]
             now = time.time()
             if job._last_time and now > job._last_time and done > job._last_count:
                 sample = (done - job._last_count) / (now - job._last_time)
                 # Smoothed: one slow generation should not swing the reading.
                 job.rate = sample if not job.rate else 0.7 * job.rate + 0.3 * sample
             job._last_count, job._last_time = done, now
-            snapshot["simulations_done"] = done
-            snapshot["simulations_total"] = budget["total"]
             snapshot["rate"] = round(job.rate, 2)
             snapshot["workers"] = workers or 0
             history = job.trace

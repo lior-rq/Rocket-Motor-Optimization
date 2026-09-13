@@ -19,6 +19,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from .runner import motor_for
 from .simulate import curves, simulate_motor
 
 #: Never write more than this many, matching the design sheets.
@@ -163,7 +164,7 @@ def build_eng_bundle(designs: Sequence[Dict], space, base_motor: Dict,
     if not designs:
         raise ValueError("That run found no legal designs.")
 
-    motors = [space.to_motor(np.asarray(d["x"], dtype=float)) for d in designs]
+    motors = [motor_for(d, space) for d in designs]
     total = len(designs)
     on_progress(0, total, "Simulating {} designs".format(total))
 

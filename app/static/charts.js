@@ -342,6 +342,19 @@ const Charts = (() => {
       }
     },
 
+    grainCounts: {
+      title: 'Grain counts',
+      sub: 'The stack cut each way: checked on paper, tried briefly, searched in full',
+      render(node, ctx) {
+        const info = ctx.grainCounts;
+        if (!info || !info.free) {
+          node.innerHTML = '<p class="sub">The grain count was held at the file\'s value.</p>';
+          return;
+        }
+        node.innerHTML = grainCountTable(info, ctx);
+      }
+    },
+
     constraintActivity: {
       title: 'Which limit is holding you back',
       sub: 'Share of legal designs sitting within 2% of each limit',
@@ -530,8 +543,8 @@ const Charts = (() => {
       panels: [['paretoFront', 1], ['populationCloud', 1], ['parallelCoords', 2],
                ['objectiveSpread', 1], ['optionsTable', 1]] },
     { id: 'diagnostics', label: 'Optimizer Diagnostics',
-      panels: [['convergence', 1], ['constraintActivity', 1], ['parity', 1],
-               ['importance', 1]] },
+      panels: [['convergence', 1], ['constraintActivity', 1], ['grainCounts', 2],
+               ['parity', 1], ['importance', 1]] },
     { id: 'compare',     label: 'Compare & Safety',
       panels: [['compareThrust', 2], ['specSheet', 1], ['grainFlux', 1],
                ['robustness', 1], ['robustnessSpread', 1], ['tornado', 2]] }
@@ -652,6 +665,7 @@ const Charts = (() => {
   }
 
   const SPEC_ROWS = [
+    ['n_grains', 'Grains', '', 0],
     ['initial_thrust', 'Initial thrust', 'N', 0],
     ['total_impulse', 'Total impulse', 'N·s', 0],
     ['peak_thrust', 'Peak thrust', 'N', 0],
@@ -664,6 +678,37 @@ const Charts = (() => {
     ['port_throat', 'Port/throat', '', 2],
     ['prop_mass', 'Propellant', 'kg', 3]
   ];
+
+  function grainCountTable(info, ctx) {
+    const labels = ((App.state.results || {}).stats || {}).objective_labels || [];
+    const multi = labels.length > 1;
+    const live = (info.stacks || []).filter(s => !s.dropped).length;
+    const rows = (info.stacks || []).map(s => {
+      const s1 = s.stage1 || {};
+      let outcome, why, cls = '';
+      if (s.dropped) { outcome = 'screened out'; why = s.dropped; }
+      else if (s.carried) {
+        outcome = 'searched in full'; cls = 'pick';
+        why = `${s.designs} legal design${s.designs === 1 ? '' : 's'}`;
+      } else {
+        outcome = 'tried, not carried';
+        why = s1.rank ? `ranked ${s1.rank} of ${live} after ${info.stage_generations} generations` : '';
+      }
+      const score = s1.score !== null && s1.score !== undefined ? s1.score.toFixed(3)
+        : (s1.near !== null && s1.near !== undefined ? 'no legal design' : '—');
+      return `<tr class="${cls}"><td class="n">${s.n}</td>
+        <td class="n">${(s.grain_length / 0.0254).toFixed(2)}″</td>
+        <td>${outcome}</td><td class="n">${score}</td>
+        <td class="why">${why}</td><td class="n">${(s.simulations || 0).toLocaleString()}</td></tr>`;
+    }).join('');
+    return `<div style="overflow-x:auto"><table class="data-table">
+      <thead><tr><th class="n">grains</th><th class="n">each</th><th>outcome</th>
+      <th class="n">${multi ? 'hypervolume' : 'best score'}</th><th></th>
+      <th class="n">sims</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="sub">Score is after the first ${info.stage_generations} generations, on the
+      same axes for every count. The ${(info.stack_length / 0.0254).toFixed(2)}″ stack length
+      was held throughout.</p></div>`;
+  }
 
   function deltaTable(design, baseline) {
     if (!design) return '<p class="sub">Run the optimizer to compare.</p>';
@@ -710,6 +755,7 @@ const Charts = (() => {
     if (!designs.length) return '<p class="sub">No feasible designs found.</p>';
     const [ax, ay] = ctx.axes;
     const b = ctx.baseline;
+    const counted = !!(ctx.grainCounts && ctx.grainCounts.free);
     const rows = designs.map((d, i) => {
       const pct = v => b && b[v] ? ((d[v] / b[v] - 1) * 100) : null;
       const cell = v => {
@@ -719,6 +765,7 @@ const Charts = (() => {
       };
       return `<tr class="clickable ${i === ctx.selected ? 'pick' : ''}" data-index="${i}">
         <td>${d.designation || ('Option ' + (i + 1))}</td>
+        ${counted ? `<td class="n">${d.n_grains || ''}</td>` : ''}
         <td class="n">${metricValue(d, ax).toFixed(0)}</td>${cell(ax)}
         <td class="n">${metricValue(d, ay).toFixed(0)}</td>${cell(ay)}
         <td class="n">${d.max_pressure_psi.toFixed(0)}</td>
@@ -727,7 +774,8 @@ const Charts = (() => {
         <td><button class="chip" data-export="${i}">.ric</button></td></tr>`;
     }).join('');
     return `<div style="overflow-x:auto;max-height:340px"><table class="data-table">
-      <thead><tr><th>class</th><th class="n">${metricLabel(ax)}</th><th class="n">Δ</th>
+      <thead><tr><th>class</th>${counted ? '<th class="n">grains</th>' : ''}
+      <th class="n">${metricLabel(ax)}</th><th class="n">Δ</th>
       <th class="n">${metricLabel(ay)}</th><th class="n">Δ</th>
       <th class="n">psi</th><th class="n">Kn</th><th class="n">flux</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;

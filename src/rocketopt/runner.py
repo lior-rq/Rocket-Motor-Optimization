@@ -18,7 +18,8 @@ from .optimize import (Objective, direct_pareto, direct_search, pareto_indices,
                        scale_constraints)
 from .sampling import evaluate_batch, generate_mixed_dataset
 from .simulate import PA_PER_PSI, curves, simulate_motor
-from .spec import OPTIMISABLE_METRICS, RunSpec, VariableSpec
+from .ric import clone
+from .spec import OPTIMISABLE_METRICS, RunSpec, VariableSpec, core_specs
 from .surrogate import Surrogate
 from .units import KG_M2S_PER_LB_IN2S, M_PER_IN
 
@@ -124,15 +125,40 @@ def jsonable(value):
 # --- Building the space and the objective from a spec ---
 
 
-def build_space(spec: RunSpec, base_motor: Dict) -> DesignSpace:
+def stack_motor(base_motor: Dict, n_grains: int) -> Dict:
+    """The loaded stack cut into ``n_grains`` equal grains.
+
+    The total length is held, so every count is the same propellant column
+    with more or fewer end faces. openMotor has no inter-grain gap, so the
+    length divides exactly.
+    """
+    grains = base_motor["grains"]
+    total = sum(g["properties"]["length"] for g in grains)
+    return apply_hardware(base_motor, grain_count=int(n_grains),
+                          grain_length=total / int(n_grains))
+
+
+def grain_counts(spec: RunSpec, base_motor: Dict) -> List[int]:
+    """Grain counts this run searches. The file's own count unless freed."""
+    return spec.grain_count.counts(len(base_motor["grains"]))
+
+
+def build_space(spec: RunSpec, base_motor: Dict,
+                n_grains: Optional[int] = None) -> DesignSpace:
     """Maps GUI variables onto the internal design space.
 
     Exit is set as a diameter but stored as a fraction of the span above the
     throat, which keeps exit > throat without a coupled constraint.
+
+    ``n_grains`` restates the stack at another count. A free count restates
+    it even at the loaded one, so every count is the same equal slicing.
     """
     by_name = {v.name: v for v in spec.variables}
-    n_grains = len(base_motor["grains"])
-    cores = [by_name["core_{}".format(i + 1)] for i in range(n_grains)]
+    loaded = len(base_motor["grains"])
+    n_grains = int(n_grains or loaded)
+    if spec.grain_count.free or n_grains != loaded:
+        base_motor = stack_motor(base_motor, n_grains)
+    cores = core_specs(spec, n_grains)
     throat = by_name["throat"]
     exit_var = by_name.get("exit")
     tl = by_name.get("throat_length")
@@ -169,6 +195,22 @@ def build_space(spec: RunSpec, base_motor: Dict) -> DesignSpace:
         internal.append(tl)
     return DesignSpace(base_motor, config, variables=internal,
                        ordering=spec.ordering)
+
+
+def design_space(spec: RunSpec, base_motor: Dict, design: Dict) -> DesignSpace:
+    """The space one reported design lives in, whatever its grain count."""
+    return build_space(spec, base_motor, design.get("n_grains"))
+
+
+def motor_for(design: Dict, space: DesignSpace) -> Dict:
+    """The openMotor dict behind a reported design.
+
+    Every described design carries its motor, since a run may report designs
+    with different grain counts and one space cannot rebuild them all.
+    """
+    if design.get("motor"):
+        return clone(design["motor"])
+    return space.to_motor(np.asarray(design["x"], dtype=float))
 
 
 def apply_hardware(base_motor: Dict, grain_diameter: Optional[float] = None,
@@ -212,7 +254,8 @@ def default_spec(base_motor: Dict) -> RunSpec:
     Bounds bracket the motor as loaded. Limits are the amateur-practice
     numbers rather than the file's own, which are usually the case rating.
     """
-    from .spec import ConstraintSpec, ObjectiveSpec, OrderingSpec
+    from .spec import (MAX_GRAIN_COUNT, ConstraintSpec, GrainCountSpec,
+                       ObjectiveSpec, OrderingSpec)
 
     grains = base_motor["grains"]
     bore = grains[0]["properties"]["diameter"]
@@ -267,6 +310,10 @@ def default_spec(base_motor: Dict) -> RunSpec:
         ],
         constraints=constraints,
         ordering=OrderingSpec(mode="nondecreasing"),
+        # Off by default; the range brackets the file's count when turned on.
+        grain_count=GrainCountSpec(
+            free=False, n_min=max(1, len(grains) - 2),
+            n_max=min(MAX_GRAIN_COUNT, len(grains) + 2)),
     )
 
 
@@ -358,6 +405,8 @@ def describe_design(space: DesignSpace, x: np.ndarray, spec: RunSpec,
         "cores": [float(g["properties"]["coreDiameter"]) for g in motor["grains"]],
         "grain_diameter": float(space.grain_diameter),
         "grain_lengths": [float(v) for v in space.grain_lengths],
+        "n_grains": int(space.n_grains),
+        "motor": motor,
         "throat": float(motor["nozzle"]["throat"]),
         "exit": float(motor["nozzle"]["exit"]),
         "expansion_ratio": float((motor["nozzle"]["exit"] / motor["nozzle"]["throat"]) ** 2),
@@ -397,7 +446,7 @@ def _constraint_report(frame: pd.DataFrame, objective: Objective,
 
 
 def _sensitivity(space: DesignSpace, x: np.ndarray, objective: Objective,
-                 spec: RunSpec) -> List[Dict]:
+                 spec: RunSpec, workers: Optional[int] = None) -> List[Dict]:
     """How much the leading objective moves if each dimension is nudged.
 
     One grid step either way where a machining grid is set, otherwise 2% of the
@@ -420,7 +469,8 @@ def _sensitivity(space: DesignSpace, x: np.ndarray, objective: Objective,
             probe[slot] = np.clip(probe[slot] + sign * delta, var.low, var.high)
             probes.append(probe)
             meta.append((var, sign))
-    frame = evaluate_batch(space, np.array(probes), timestep=spec.verify_timestep)
+    frame = evaluate_batch(space, np.array(probes), timestep=spec.verify_timestep,
+                           workers=workers)
 
     gathered: Dict[str, Dict] = {}
     for (var, sign), (_, row) in zip(meta, frame.iterrows()):
@@ -448,8 +498,12 @@ def _convergence(history: pd.DataFrame, objective: Objective,
 
 
 def _population(history: pd.DataFrame, objective: Objective, space: DesignSpace,
-                cap: int = 4000) -> List[Dict]:
-    """A sample of everything simulated, for the scatter and parallel plots."""
+                names: Optional[List[str]] = None, cap: int = 4000) -> List[Dict]:
+    """A sample of everything simulated, for the scatter and parallel plots.
+
+    ``names`` are the dimension columns to carry; the space's own by default.
+    A run over several grain counts passes the columns every count shares.
+    """
     if not len(history):
         return []
     frame = history.copy()
@@ -457,12 +511,74 @@ def _population(history: pd.DataFrame, objective: Objective, space: DesignSpace,
     frame["feasible"] = frame["ok"].to_numpy(dtype=bool) & (violation <= 0)
     if len(frame) > cap:
         frame = frame.sample(cap, random_state=0)
+    names = list(space.names) if names is None else list(names)
     columns = ([m for m in OPTIMISABLE_METRICS if m in frame.columns]
-               + [n for n in space.names if n in frame.columns] + ["feasible"])
+               + [n for n in names if n in frame.columns] + ["feasible"])
     return frame[columns].to_dict("records")
 
 
 # --- The run itself ---
+
+
+@dataclass
+class _Stack:
+    """One grain count under consideration, with everything its search needs."""
+
+    n: int
+    space: DesignSpace
+    objective: Objective
+    seeds: np.ndarray
+    grain_length: float
+    screen: Dict = field(default_factory=dict)
+    dropped: Optional[str] = None
+    stage1: Optional[Dict] = None
+    carried: bool = False
+    front: pd.DataFrame = field(default_factory=pd.DataFrame)
+    history: pd.DataFrame = field(default_factory=pd.DataFrame)
+    designs: List[Dict] = field(default_factory=list)
+    per_seed: List[Dict] = field(default_factory=list)
+    surrogate: Optional[Dict] = None
+    sim_seconds: float = 0.0
+
+    def summary(self) -> Dict:
+        stage1 = None
+        if self.stage1 is not None:
+            stage1 = {k: v for k, v in self.stage1.items() if k != "front"}
+        return {"n": self.n, "grain_length": self.grain_length,
+                "screen": self.screen, "dropped": self.dropped,
+                "stage1": stage1, "carried": self.carried,
+                "designs": len(self.designs),
+                "simulations": int(len(self.history))}
+
+
+class _Meter:
+    """Simulations done against the plan, so the waiting screen has a bar.
+
+    The plan changes once the first stage has chosen which counts go on, so
+    the total is restated then.
+    """
+
+    def __init__(self, total: int = 0) -> None:
+        self.total = int(total)
+        self.done = 0
+
+    def stamp(self, snap: Dict, within: int) -> None:
+        snap["simulations_done"] = int(self.done + within)
+        snap["simulations_total"] = int(max(self.total, self.done + within))
+
+
+def _window(lo: float, hi: float, index: int, count: int):
+    """The ``index``-th of ``count`` equal slices of a progress window."""
+    span = (hi - lo) / max(count, 1)
+    return lo + span * index, lo + span * (index + 1)
+
+
+def _file_space(spec: RunSpec, base_motor: Dict) -> DesignSpace:
+    """The motor exactly as its file has it, whatever the count rule says."""
+    from dataclasses import replace as _replace
+    from .spec import GrainCountSpec
+
+    return build_space(_replace(spec, grain_count=GrainCountSpec()), base_motor)
 
 
 def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
@@ -476,16 +592,15 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
     result = RunResult(spec=spec.to_dict())
     on_progress("baseline", 0.02, "Simulating your current motor")
 
-    space = build_space(spec, base_motor)
     baseline_metrics = simulate_motor(base_motor, timestep=spec.verify_timestep)
-    bias = timestep_bias(base_motor, spec.search_timestep, spec.verify_timestep)
-    objective = build_objective(spec, baseline_metrics, bias)
     # Verification uses the limits exactly as the user typed them.
     verify_objective = build_objective(spec, baseline_metrics, bias=None).strict()
     budget = spec.budget
+    n_obj = len(spec.enabled_objectives)
 
-    baseline_x = space.from_motor(base_motor)
-    result.baseline = describe_design(space, baseline_x, spec, "Your motor",
+    base_space = _file_space(spec, base_motor)
+    baseline_x = base_space.from_motor(base_motor)
+    result.baseline = describe_design(base_space, baseline_x, spec, "Your motor",
                                       with_curves=True)
     # Report the motor as it is, not as the grid rounds it.
     result.baseline.update({
@@ -499,119 +614,422 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
         "mass_flux_lb": float(baseline_metrics.peak_mass_flux / KG_M2S_PER_LB_IN2S),
     })
 
-    surrogate = None
-    history = pd.DataFrame()
-    front = pd.DataFrame()
-    n_obj = len(spec.enabled_objectives)
-    #: Wall time on real simulations only, excluding surrogate work.
-    sim_seconds = 0.0
+    stacks = _build_stacks(spec, base_motor, baseline_metrics)
+    several = len(stacks) > 1
+    per_count = budget["samples"] if spec.mode == "pareto" else budget["total"]
+    meter = _Meter(per_count)
 
-    if spec.mode == "pareto":
-        on_progress("sampling", 0.06, "Sampling the design space")
-        sampling_started = time.time()
-        dataset = generate_mixed_dataset(space, budget["samples"],
-                                         timestep=spec.search_timestep,
-                                         seed=spec.seed, workers=workers)
-        sim_seconds = time.time() - sampling_started
-        history = dataset
-        on_progress("training", 0.42, "Training surrogate models")
-        surrogate = Surrogate(space, kind="gbt", seed=spec.seed)
-        scores = surrogate.fit(dataset)
-        result.surrogate = {
-            "kind": surrogate.kind,
-            "scores": [s.as_row() for s in scores],
-            "importances": surrogate.importances(
-                dataset, objective.objective_labels[0]).head(12).to_dict("records"),
-            "parity": _parity_sample(surrogate, dataset, space),
-        }
-        from .optimize import surrogate_pareto
-        starts = _seed_designs(dataset, space, objective, baseline_x)
-        n_seeds = max(1, int(budget.get("seeds", 1)))
-        # The surrogate is trained once; searching it again is nearly free.
-        # Without this loop the seed count is ignored on the pareto path.
-        fronts = []
-        labels = objective.objective_labels
-        for index in range(n_seeds):
-            on_progress("search", 0.58 + 0.30 * index / n_seeds,
-                        "Mapping the trade-off: search {} of {}".format(
-                            index + 1, n_seeds))
-
-            def tick(algorithm, index=index):
-                """Same live view as the simulator path, over predictions."""
-                done = getattr(algorithm, "n_gen", 0) or 0
-                within = min(done / max(budget["gen"], 1), 1.0)
-                on_progress("search", 0.58 + 0.30 * (index + within) / n_seeds,
-                            "Mapping the trade-off: search {} of {}, "
-                            "generation {} of {}".format(
-                                index + 1, n_seeds,
-                                min(int(done), budget["gen"]), budget["gen"]))
-                frame = getattr(getattr(algorithm, "problem", None),
-                                "last_frame", None)
-                snap = _snapshot(frame, objective, space, labels, done, index,
-                                 n_seeds, surrogate=True)
-                if snap is not None:
-                    snap["total_generations"] = int(budget["gen"])
-                    on_telemetry(snap)
-
-            out = surrogate_pareto(
-                space, surrogate, objective, pop_size=budget["pop"],
-                n_gen=budget["gen"], timestep=spec.verify_timestep,
-                workers=workers, seed=int(spec.seed) + 1009 * index,
-                seed_designs=starts, reference=dataset, callback=tick)
-            found = out.get("front", pd.DataFrame())
-            if len(found):
-                fronts.append(found)
-        front = pd.concat(fronts, ignore_index=True) if fronts else pd.DataFrame()
-        if len(front) and n_obj > 1:
-            front = front.iloc[pareto_indices(-objective.matrix(front))]
-            front = front.reset_index(drop=True)
-        result.stats["per_seed"] = [
-            {"seed": int(spec.seed) + 1009 * i, "designs": int(len(f))}
-            for i, f in enumerate(fronts)]
+    if several:
+        on_progress("screen", 0.04, "Checking which grain counts can be legal")
+        for stack in stacks:
+            stack.dropped = _screen(stack, spec)
+        live = [s for s in stacks if s.dropped is None]
+        if not live:
+            # Nothing passes on paper. Search every count anyway, so the
+            # report can say which limit could not be met.
+            for stack in stacks:
+                stack.dropped = None
+            live = stacks
+        stage_sims = budget["pop"] * spec.grain_count.stage_generations
+        meter.total = stage_sims * len(live) + per_count * min(
+            len(live), spec.grain_count.carry)
+        _stage_one(live, spec, budget, n_obj, workers, on_progress,
+                   on_telemetry, meter, (0.06, 0.24))
+        _select(live, spec)
+        carried = [s for s in live if s.carried]
+        meter.total = meter.done + per_count * len(carried)
     else:
-        search_started = time.time()
-        searched = _multi_seed_search(space, objective, spec, budget,
-                                      baseline_x, n_obj, workers, on_progress,
-                                      on_telemetry)
-        sim_seconds = time.time() - search_started
-        front = searched["front"]
-        history = searched["history"]
-        result.stats["per_seed"] = searched["per_seed"]
+        stacks[0].carried = True
+        carried = stacks
+
+    search_started = time.time()
+    lo, hi = (0.26, 0.88) if several else (0.08, 0.88)
+    for index, stack in enumerate(carried):
+        _search_stack(stack, spec, budget, n_obj, workers, on_progress,
+                      on_telemetry, meter, _window(lo, hi, index, len(carried)),
+                      several)
+    search_seconds = time.time() - search_started
 
     on_progress("verify", 0.90, "Re-simulating the winners at full fidelity")
-    result.designs = _rank_designs(space, front, spec, verify_objective, history)
+    for stack in carried:
+        stack.designs = _rank_designs(stack.space, stack.front, spec,
+                                      verify_objective, stack.history, workers)
+    result.designs = _merge_designs(carried, verify_objective, n_obj)
     if not result.designs:
         result.messages.append(
             "No design met every constraint. Try relaxing the tightest limit, "
             "widening a bound, or freeing another dimension.")
     else:
+        best = result.designs[0]
+        best_stack = next(s for s in carried if s.n == best["n_grains"])
         result.sensitivity = _sensitivity(
-            space, np.array(result.designs[0]["x"]), verify_objective, spec)
+            best_stack.space, np.array(best["x"]), verify_objective, spec, workers)
+        result.surrogate = best_stack.surrogate
+    if result.surrogate is None:
+        result.surrogate = next((s.surrogate for s in carried if s.surrogate), None)
 
-    result.convergence = _convergence(history, objective, space)
-    result.population = _population(history, verify_objective, space)
-    result.constraint_activity = _constraint_report(history, verify_objective, space)
+    history = pd.concat([s.history for s in stacks if len(s.history)],
+                        ignore_index=True) if any(len(s.history) for s in stacks) \
+        else pd.DataFrame()
+    objective = carried[0].objective
+    searched = (list(base_space.names) if not several else
+                ["n_grains"] + [n for n in base_space.names
+                                if not n.startswith("core")])
+    result.convergence = _convergence(history, objective, base_space)
+    result.population = _population(history, verify_objective, base_space, searched)
+    result.constraint_activity = _constraint_report(history, verify_objective,
+                                                    base_space)
+    sim_seconds = sum(s.sim_seconds for s in carried)
+    stage_sims = sum(int(s.stage1["simulations"]) for s in stacks if s.stage1)
     result.stats = {
-        **result.stats,
+        "per_seed": [dict(row, n_grains=s.n) for s in carried for row in s.per_seed],
         "simulations": int(len(history)),
         # Only from a purely-simulation window: a multi-objective search
         # verifies inside its own timing, and those runs are not in history.
-        "sim_rate": (round(len(history) / sim_seconds
+        "sim_rate": (round((len(history) - stage_sims) / sim_seconds
                            * (max(spec.search_timestep, 0.002) / 0.01) ** -0.75, 2)
-                     if (sim_seconds > 0.5 and len(history)
+                     if (sim_seconds > 0.5 and len(history) > stage_sims
                          and (spec.mode == "pareto" or n_obj == 1)) else None),
         "seeds": int(budget.get("seeds", 1)),
         "budget": int(budget.get("total", 0)),
         "seconds": round(time.time() - started, 1),
+        "search_seconds": round(search_seconds, 1),
         "mode": spec.mode,
         "effort": spec.effort,
         "n_designs": len(result.designs),
         "objective_labels": objective.objective_labels,
-        "searched": space.names,
-        "frozen": [s.name for s in space.specs if not s.free],
+        "searched": searched,
+        "frozen": [v.name for v in base_space.specs if not v.free],
+        "grain_counts": {
+            "free": bool(spec.grain_count.free),
+            "loaded": int(len(base_motor["grains"])),
+            "stack_length": float(sum(g["properties"]["length"]
+                                      for g in base_motor["grains"])),
+            "counts": [s.n for s in stacks],
+            "carried": [s.n for s in carried],
+            "stage_generations": int(spec.grain_count.stage_generations),
+            "stage1_simulations": int(stage_sims),
+            "stacks": [s.summary() for s in stacks],
+        },
     }
     on_progress("done", 1.0, "Finished")
     return result
+
+
+# --- Grain counts: build, screen, try briefly, choose ---
+
+
+def _build_stacks(spec: RunSpec, base_motor: Dict, baseline_metrics) -> List[_Stack]:
+    """One search problem per grain count, each with its own timestep bias."""
+    stacks = []
+    for n in grain_counts(spec, base_motor):
+        space = build_space(spec, base_motor, n)
+        motor_n = space.base
+        bias = timestep_bias(motor_n, spec.search_timestep, spec.verify_timestep)
+        objective = build_objective(spec, baseline_metrics, bias)
+        stacks.append(_Stack(n=n, space=space, objective=objective,
+                             seeds=space.from_motor(motor_n)[None, :],
+                             grain_length=float(space.grain_lengths[0])))
+    return stacks
+
+
+def _screen(stack: _Stack, spec: RunSpec, samples: int = 3000) -> Optional[str]:
+    """Why no motor at this count can be legal, on paper, or None.
+
+    Exact bound first: if Kn cannot be held with every core at its minimum and
+    the throat at its maximum, nothing can. Then the sampled closed-form
+    screen the settings page already uses.
+    """
+    from .sizing import estimate_feasible, tighten_bounds
+
+    motor = stack.space.base
+    throat = next((v for v in spec.variables if v.name == "throat"), None)
+    try:
+        tight = tighten_bounds(spec, motor)
+        screened = estimate_feasible(spec, motor, samples=samples)
+    except Exception:
+        return None            # a screen that cannot run rules nothing out
+    stack.screen = {
+        "throat_low": tight.get("throat_low"),
+        "core_high": tight.get("core_high"),
+        "available": bool(screened.get("available")),
+        "fraction": screened.get("fraction"),
+        "hits": screened.get("hits"),
+        "samples": screened.get("samples"),
+    }
+    floor = tight.get("throat_low")
+    if throat is not None and floor is not None and floor >= throat.high - 1e-12:
+        return ("Even with every core at its minimum, holding Kn needs a throat "
+                "at least as wide as the largest allowed.")
+    if screened.get("available") and not screened.get("hits"):
+        return ("None of {:,} closed-form samples met Kn and port/throat "
+                "together.".format(int(screened.get("samples", samples))))
+    return None
+
+
+def _stage_one(stacks: List[_Stack], spec: RunSpec, budget: Dict, n_obj: int,
+               workers, on_progress, on_telemetry, meter: _Meter,
+               window) -> None:
+    """A short search per count, enough to rank them.
+
+    Multi-objective counts are ranked on the hypervolume of their verified
+    front; single-objective on the best legal score. A count with no legal
+    design keeps how close it came, so the order is total.
+    """
+    gens = int(spec.grain_count.stage_generations)
+    pop = int(budget["pop"])
+    labels = None
+
+    for k, stack in enumerate(stacks):
+        lo, hi = _window(window[0], window[1], k, len(stacks))
+        labels = stack.objective.objective_labels
+        label = "Trying {} grains".format(stack.n)
+
+        def tick(algorithm, stack=stack, lo=lo, hi=hi, k=k, label=label):
+            done = getattr(algorithm, "n_gen", 0) or 0
+            within = min(done / max(gens, 1), 1.0)
+            on_progress("stage1", lo + (hi - lo) * within,
+                        "{}: generation {} of {}".format(
+                            label, min(int(done), gens), gens))
+            frame = getattr(getattr(algorithm, "problem", None), "last_frame", None)
+            snap = _snapshot(frame, stack.objective, stack.space, labels, done,
+                             k, len(stacks))
+            if snap is not None:
+                snap.update(total_generations=gens, n_grains=stack.n,
+                            stage="stage1")
+                meter.stamp(snap, min(int(done), gens) * pop)
+                on_telemetry(snap)
+
+        seed = int(spec.seed) + 7919 * stack.n
+        if n_obj > 1:
+            out = direct_pareto(
+                stack.space, stack.objective, pop_size=pop, n_gen=gens,
+                timestep=spec.search_timestep, workers=workers, seed=seed,
+                verify_timestep=spec.verify_timestep, seed_designs=stack.seeds,
+                callback=tick)
+            history = out.get("history", pd.DataFrame())
+            front = out.get("front", pd.DataFrame())
+        else:
+            out = direct_search(
+                stack.space, stack.objective, pop_size=pop, n_gen=gens,
+                timestep=spec.search_timestep, workers=workers, seed=seed,
+                callback=tick, seed_designs=stack.seeds)
+            history = out.get("history", pd.DataFrame())
+            front = _alternatives(stack.space, history, stack.objective, out["x"])
+        meter.done += int(len(history))
+
+        score, near = None, None
+        if len(history):
+            violation = scale_constraints(history, stack.objective, stack.space).max(axis=1)
+            feasible = history["ok"].to_numpy(dtype=bool) & (violation <= 0)
+            if feasible.any():
+                score = float(stack.objective.score_frame(history[feasible]).max())
+            near = float(-violation.min())
+        stack.stage1 = {"simulations": int(len(history)), "score": score,
+                        "near": near, "front": front,
+                        "designs": int(len(front)),
+                        "hypervolume": None, "rank": None}
+        stack.history = history.assign(n_grains=stack.n) if len(history) else history
+        if len(front):
+            X = stack.space.canonicalize(front[stack.space.names].to_numpy(dtype=float))
+            stack.seeds = np.vstack([stack.seeds, X])
+
+    if n_obj > 1:
+        _hypervolumes(stacks)
+
+
+def _hypervolumes(stacks: List[_Stack]) -> None:
+    """Hypervolume of each count's first-stage front, one reference point for all.
+
+    Fronts are normalised against the same baselines, so they share axes. The
+    reference sits just past the worst value any front reaches.
+    """
+    from pymoo.indicators.hv import HV
+
+    fronts = {}
+    for stack in stacks:
+        front = stack.stage1.get("front") if stack.stage1 else None
+        if front is not None and len(front):
+            fronts[stack.n] = stack.objective.matrix(front)
+    if not fronts:
+        return
+    stacked = np.vstack(list(fronts.values()))
+    worst = stacked.max(axis=0)
+    best = stacked.min(axis=0)
+    ref = worst + 0.05 * np.maximum(worst - best, 1e-9)
+    indicator = HV(ref_point=ref)
+    for stack in stacks:
+        F = fronts.get(stack.n)
+        if F is None:
+            continue
+        hv = float(indicator(F))
+        stack.stage1["hypervolume"] = hv
+        stack.stage1["score"] = hv
+
+
+def _select(stacks: List[_Stack], spec: RunSpec) -> None:
+    """Which counts go on to the full search.
+
+    The best ``carry`` by first-stage score, plus any within ``carry_within``
+    of the leader. Counts with no legal design rank after every count with
+    one, closest first, so a run that found nothing still carries something.
+    """
+    gc = spec.grain_count
+
+    def key(stack: _Stack):
+        s = stack.stage1 or {}
+        score, near = s.get("score"), s.get("near")
+        legal = score is not None
+        return (0 if legal else 1,
+                -(score if legal else (near if near is not None else -np.inf)))
+
+    ordered = sorted(stacks, key=key)
+    legal = [s for s in ordered if s.stage1 and s.stage1.get("score") is not None]
+    cut = None
+    if legal:
+        leader = float(legal[0].stage1["score"])
+        cut = leader - abs(leader) * float(gc.carry_within)
+    for rank, stack in enumerate(ordered):
+        score = (stack.stage1 or {}).get("score")
+        within = cut is not None and score is not None and score >= cut
+        stack.carried = rank < int(gc.carry) or within
+        if stack.stage1 is not None:
+            stack.stage1["rank"] = rank + 1
+
+
+def _search_stack(stack: _Stack, spec: RunSpec, budget: Dict, n_obj: int,
+                  workers, on_progress, on_telemetry, meter: _Meter, window,
+                  several: bool) -> None:
+    """The full search at one count, exactly as a fixed-count run does it."""
+    if spec.mode == "pareto":
+        out = _surrogate_search(stack.space, stack.objective, spec, budget,
+                                stack.seeds, workers, on_progress, on_telemetry,
+                                meter, window, stack.n if several else None)
+        stack.surrogate = out.get("surrogate")
+    else:
+        out = _multi_seed_search(stack.space, stack.objective, spec, budget,
+                                 stack.seeds, n_obj, workers, on_progress,
+                                 on_telemetry, meter, window,
+                                 stack.n if several else None)
+    stack.front = out["front"]
+    stack.per_seed = out["per_seed"]
+    stack.sim_seconds = float(out.get("sim_seconds", 0.0))
+    history = out.get("history", pd.DataFrame())
+    if len(history):
+        history = history.assign(n_grains=stack.n)
+        stack.history = (pd.concat([stack.history, history], ignore_index=True)
+                         if len(stack.history) else history)
+
+
+def _merge_designs(stacks: List[_Stack], objective: Objective,
+                   n_obj: int, cap: int = 60) -> List[Dict]:
+    """Every count's verified designs, as one ranked list.
+
+    Compared on metrics alone, since the design vectors differ in length. The
+    non-dominated set is taken again across counts.
+    """
+    designs = [d for stack in stacks for d in stack.designs]
+    if not designs:
+        return []
+    frame = pd.DataFrame([{m: d.get(m) for m in OPTIMISABLE_METRICS} for d in designs])
+    frame["ok"] = True
+    if n_obj > 1 and len(designs) > 1:
+        keep = pareto_indices(-objective.matrix(frame))
+        designs = [designs[i] for i in keep]
+        frame = frame.iloc[keep].reset_index(drop=True)
+        if len(designs) > cap:      # keep the front readable, spread across it
+            order = np.argsort(-frame[objective.objective_labels[0]].to_numpy(dtype=float))
+            picked = np.unique(order[np.linspace(0, len(order) - 1, cap).round().astype(int)])
+            designs = [designs[i] for i in picked]
+            frame = frame.iloc[picked].reset_index(drop=True)
+    score = objective.score_frame(frame)
+    out = []
+    for rank, i in enumerate(np.argsort(-score, kind="stable")):
+        design = dict(designs[i])
+        design["label"] = "Option {}".format(rank + 1)
+        out.append(design)
+    return out
+
+
+def _surrogate_search(space: DesignSpace, objective: Objective, spec: RunSpec,
+                      budget: Dict, seeds: np.ndarray, workers, on_progress,
+                      on_telemetry: TelemetryFn, meter: _Meter, window,
+                      n_grains: Optional[int] = None) -> Dict:
+    """Sample, train, search the model, verify: the trade-off path."""
+    from .optimize import surrogate_pareto
+
+    lo, hi = window
+    span = hi - lo
+    at = lambda f: lo + span * f  # noqa: E731
+    tag = " ({} grains)".format(n_grains) if n_grains else ""
+
+    on_progress("sampling", at(0.0), "Sampling the design space" + tag)
+    sampling_started = time.time()
+    dataset = generate_mixed_dataset(space, budget["samples"],
+                                     timestep=spec.search_timestep,
+                                     seed=spec.seed, workers=workers)
+    sim_seconds = time.time() - sampling_started
+    meter.done += int(len(dataset))
+    on_progress("training", at(0.45), "Training surrogate models" + tag)
+    surrogate = Surrogate(space, kind="gbt", seed=spec.seed)
+    scores = surrogate.fit(dataset)
+    surrogate_info = {
+        "kind": surrogate.kind,
+        "scores": [s.as_row() for s in scores],
+        "importances": surrogate.importances(
+            dataset, objective.objective_labels[0]).head(12).to_dict("records"),
+        "parity": _parity_sample(surrogate, dataset, space),
+        "n_grains": n_grains,
+    }
+    baseline_x = seeds[0]
+    starts = np.vstack([np.atleast_2d(seeds),
+                        _seed_designs(dataset, space, objective, baseline_x)])
+    n_seeds = max(1, int(budget.get("seeds", 1)))
+    # The surrogate is trained once; searching it again is nearly free.
+    fronts = []
+    labels = objective.objective_labels
+    for index in range(n_seeds):
+        on_progress("search", at(0.55 + 0.40 * index / n_seeds),
+                    "Mapping the trade-off{}: search {} of {}".format(
+                        tag, index + 1, n_seeds))
+
+        def tick(algorithm, index=index):
+            """Same live view as the simulator path, over predictions."""
+            done = getattr(algorithm, "n_gen", 0) or 0
+            within = min(done / max(budget["gen"], 1), 1.0)
+            on_progress("search", at(0.55 + 0.40 * (index + within) / n_seeds),
+                        "Mapping the trade-off{}: search {} of {}, "
+                        "generation {} of {}".format(
+                            tag, index + 1, n_seeds,
+                            min(int(done), budget["gen"]), budget["gen"]))
+            frame = getattr(getattr(algorithm, "problem", None),
+                            "last_frame", None)
+            snap = _snapshot(frame, objective, space, labels, done, index,
+                             n_seeds, surrogate=True)
+            if snap is not None:
+                snap["total_generations"] = int(budget["gen"])
+                snap["stage"] = "search"
+                if n_grains:
+                    snap["n_grains"] = int(n_grains)
+                meter.stamp(snap, 0)
+                on_telemetry(snap)
+
+        out = surrogate_pareto(
+            space, surrogate, objective, pop_size=budget["pop"],
+            n_gen=budget["gen"], timestep=spec.verify_timestep,
+            workers=workers, seed=int(spec.seed) + 1009 * index,
+            seed_designs=starts, reference=dataset, callback=tick)
+        found = out.get("front", pd.DataFrame())
+        if len(found):
+            fronts.append(found)
+    front = pd.concat(fronts, ignore_index=True) if fronts else pd.DataFrame()
+    if len(front) and len(labels) > 1:
+        front = front.iloc[pareto_indices(-objective.matrix(front))]
+        front = front.reset_index(drop=True)
+    return {"front": front, "history": dataset, "surrogate": surrogate_info,
+            "sim_seconds": sim_seconds,
+            "per_seed": [{"seed": int(spec.seed) + 1009 * i, "designs": int(len(f))}
+                         for i, f in enumerate(fronts)]}
 
 
 def _alternatives(space: DesignSpace, history: pd.DataFrame,
@@ -645,33 +1063,45 @@ def _alternatives(space: DesignSpace, history: pd.DataFrame,
 
 
 def _multi_seed_search(space: DesignSpace, objective: Objective, spec: RunSpec,
-                       budget: Dict, baseline_x: np.ndarray, n_obj: int,
+                       budget: Dict, seeds: np.ndarray, n_obj: int,
                        workers, on_progress,
-                       on_telemetry: TelemetryFn = _noop_telemetry) -> Dict:
+                       on_telemetry: TelemetryFn = _noop_telemetry,
+                       meter: Optional[_Meter] = None, window=(0.08, 0.88),
+                       n_grains: Optional[int] = None) -> Dict:
     """Several independent searches, merged into one front.
 
     A genetic search converges on whichever basin it started in, so splitting
     the budget across seeds and merging beats spending it all on one search.
     """
     n_seeds = max(1, int(budget.get("seeds", 1)))
+    meter = meter or _Meter(budget["total"])
+    lo, hi = window
+    tag = " ({} grains)".format(n_grains) if n_grains else ""
+    seeds = np.atleast_2d(np.asarray(seeds, dtype=float))
     fronts, histories, per_seed = [], [], []
+    started = time.time()
 
     for index in range(n_seeds):
         seed = int(spec.seed) + 1009 * index      # spread, not consecutive
-        label = "search {} of {}".format(index + 1, n_seeds)
+        label = "search {} of {}{}".format(index + 1, n_seeds, tag)
 
         labels = objective.objective_labels
 
         def tick(algorithm, index=index, label=label):
             done = getattr(algorithm, "n_gen", 0) or 0
             within = min(done / max(budget["gen"], 1), 1.0)
-            on_progress("search", 0.08 + 0.80 * (index + within) / n_seeds,
+            on_progress("search", lo + (hi - lo) * (index + within) / n_seeds,
                         "{}: generation {} of {}".format(
                             label, min(int(done), budget["gen"]), budget["gen"]))
             frame = getattr(getattr(algorithm, "problem", None), "last_frame", None)
             snap = _snapshot(frame, objective, space, labels, done, index, n_seeds)
             if snap is not None:
                 snap["total_generations"] = int(budget["gen"])
+                snap["stage"] = "search"
+                if n_grains:
+                    snap["n_grains"] = int(n_grains)
+                meter.stamp(snap, (index * budget["gen"] + min(int(done), budget["gen"]))
+                            * budget["pop"])
                 on_telemetry(snap)
 
         if n_obj > 1:
@@ -679,13 +1109,13 @@ def _multi_seed_search(space: DesignSpace, objective: Objective, spec: RunSpec,
                 space, objective, pop_size=budget["pop"], n_gen=budget["gen"],
                 timestep=spec.search_timestep, workers=workers, seed=seed,
                 verify_timestep=spec.verify_timestep,
-                seed_designs=baseline_x[None, :], callback=tick)
+                seed_designs=seeds, callback=tick)
             found = out.get("front", pd.DataFrame())
         else:
             out = direct_search(
                 space, objective, pop_size=budget["pop"], n_gen=budget["gen"],
                 timestep=spec.search_timestep, workers=workers, seed=seed,
-                callback=tick, seed_designs=baseline_x[None, :])
+                callback=tick, seed_designs=seeds)
             found = _alternatives(space, out.get("history", pd.DataFrame()),
                                   objective, out["x"])
         if len(found):
@@ -696,6 +1126,7 @@ def _multi_seed_search(space: DesignSpace, objective: Objective, spec: RunSpec,
         histories.append(history)
         per_seed.append({"seed": seed, "designs": int(len(found)),
                          "simulations": int(len(history))})
+    meter.done += int(sum(len(h) for h in histories))
 
     combined = pd.concat(fronts, ignore_index=True) if fronts else pd.DataFrame()
     if len(combined) and n_obj > 1:
@@ -704,7 +1135,8 @@ def _multi_seed_search(space: DesignSpace, objective: Objective, spec: RunSpec,
     return {"front": combined,
             "history": pd.concat(histories, ignore_index=True) if histories
                        else pd.DataFrame(),
-            "per_seed": per_seed}
+            "per_seed": per_seed,
+            "sim_seconds": time.time() - started}
 
 
 def _seed_designs(dataset: pd.DataFrame, space: DesignSpace,
@@ -720,7 +1152,8 @@ def _seed_designs(dataset: pd.DataFrame, space: DesignSpace,
 
 
 def _rank_designs(space: DesignSpace, front: pd.DataFrame, spec: RunSpec,
-                  objective: Objective, history: pd.DataFrame) -> List[Dict]:
+                  objective: Objective, history: pd.DataFrame,
+                  workers: Optional[int] = None) -> List[Dict]:
     """Verifies each candidate and keeps only those that clear every limit."""
     if not len(front):
         return []
@@ -728,7 +1161,8 @@ def _rank_designs(space: DesignSpace, front: pd.DataFrame, spec: RunSpec,
     if len(X) > 60:  # keep the front readable, spread across the trade-off
         keep = np.linspace(0, len(X) - 1, 60).round().astype(int)
         X = X[np.unique(keep)]
-    verified = evaluate_batch(space, X, timestep=spec.verify_timestep)
+    verified = evaluate_batch(space, X, timestep=spec.verify_timestep,
+                              workers=workers)
     violation = scale_constraints(verified, objective.strict(), space).max(axis=1)
     good = verified[verified["ok"].to_numpy(dtype=bool) & (violation <= 0)]
     if not len(good):
