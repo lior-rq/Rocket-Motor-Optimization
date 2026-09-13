@@ -36,6 +36,10 @@ OPTIMISABLE_METRICS: Dict[str, Dict] = {
                    "help": "Kn at ignition. Sets initial pressure, so it sets initial thrust."},
     "peak_mass_flux": {"label": "Peak mass flux", "unit": "lb/in\u00b2s", "kind": "mass_flux",
                        "help": "Gas mass flow per unit port area. High values risk erosive burning."},
+    "peak_mach": {"label": "Peak core Mach", "unit": "", "kind": None,
+                  "places": 2,
+                  "help": "Fastest the gas moves down any core, as a Mach number. Past 1 "
+                          "the port chokes. openMotor's own file limit is usually lower."},
     "port_throat": {"label": "Port/throat ratio", "unit": "", "kind": None,
                     "help": "Aft port area over throat area. Too low and the port chokes."},
     "prop_mass": {"label": "Propellant mass", "unit": "kg", "kind": None,
@@ -44,7 +48,17 @@ OPTIMISABLE_METRICS: Dict[str, Dict] = {
                        "help": "Fraction of the chamber filled with propellant."},
     "separation_pct": {"label": "Flow separation", "unit": "%", "kind": None,
                        "help": "Portion of the burn where the nozzle may be separated."},
+    "residual_pct": {"label": "Residual propellant", "unit": "%", "kind": None,
+                     "places": 2,
+                     "help": "Propellant still unburned when the motor quits: "
+                             "thrust under openMotor's burnout threshold, or "
+                             "pressure below the propellant's burn-rate range. "
+                             "The sliver left when cores of different sizes "
+                             "finish at different times."},
 }
+
+#: Designs kept from a run. Sheets, .eng and .ric downloads follow it.
+MAX_DESIGNS = 90
 
 ORDERING_MODES = {
     "none": "Cores may be in any order",
@@ -163,9 +177,10 @@ class GrainCountSpec:
     #: Generations each count gets in the first stage, before the ranking.
     stage_generations: int = 10
     #: Counts carried into the full search. Any count whose first-stage score
-    #: is within ``carry_within`` of the leader's is carried as well.
+    #: is within ``carry_within`` of the leader's is carried as well. Two
+    #: percent: hypervolumes closer than that are a tie, wider is a loss.
     carry: int = 2
-    carry_within: float = 0.10
+    carry_within: float = 0.02
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -179,7 +194,7 @@ class GrainCountSpec:
             n_max=max(1, int(data.get("n_max", 8) or 8)),
             stage_generations=max(2, int(data.get("stage_generations", 10) or 10)),
             carry=max(1, int(data.get("carry", 2) or 2)),
-            carry_within=float(data.get("carry_within", 0.10) or 0.0),
+            carry_within=float(data.get("carry_within", 0.02) or 0.0),
         )
 
     def counts(self, loaded: int) -> List[int]:

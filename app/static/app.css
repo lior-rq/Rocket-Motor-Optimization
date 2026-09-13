@@ -313,6 +313,10 @@ table.vars.hardware select {
   align-items: center; margin-top: 6px; }
 .live-spark { height: 64px; border-left: 2px solid var(--line);
   padding-left: 10px; }
+.best-dl { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--line); animation: pop-in .25s ease-out; }
+.best-dl .meta { font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
 .live-foot .sub { font-size: 11.5px; color: var(--ink-3); margin: 0; }
 @media (prefers-reduced-motion: reduce) { .live-plot { height: 380px; } }
 
@@ -732,3 +736,109 @@ table.vars.hardware select {
 label.check { display: flex; align-items: center; gap: 8px; font-size: 13px;
   cursor: pointer; }
 .hint.warn { color: var(--warn); }
+
+/* Sortable option columns. */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: var(--ink); }
+th.sortable.on { color: var(--accent); }
+
+/* ================================================================ dynamic */
+
+/* --- responsive: phones and narrow windows ------------------------------ */
+
+@media (max-width: 720px) {
+  /* The top bar stops being sticky once it wraps; the stepper takes its place. */
+  .topbar { height: auto; flex-wrap: wrap; row-gap: 8px; padding: 8px 12px;
+            position: static; }
+  .topbar-right { width: 100%; margin-left: 0; justify-content: space-between; }
+  .legacy-link { display: none; }
+  .motor-chip { order: 3; width: 100%; }
+  .stepper { top: 0; padding: 6px 8px 0; gap: 0; }
+  .step-tab { padding: 8px 9px 9px; }
+  .step-tab:not(.active) .name { display: none; }
+  .wizard, .wizard-foot { padding-left: 12px; padding-right: 12px; }
+  .cols.split, .cols.wide-left, .cols.run-split { grid-template-columns: 1fr; }
+  .budget { grid-template-columns: 1fr; }
+  .field-row { flex-direction: column; gap: 0; }
+  .live-foot { grid-template-columns: 1fr; }
+  .live-plot { height: 320px; }
+  .live-stats { gap: 14px; flex-wrap: wrap; }
+  .margin-row { grid-template-columns: 96px 1fr 84px; gap: 6px; }
+  .panel.wide { grid-column: auto; }
+  .plot { min-height: 220px; }
+  .motor-thrust.tall { height: 280px; }
+  .toast { left: 12px; right: 12px; transform: none; text-align: center; }
+}
+
+/* Charts always fill their card; Plotly only sizes what it can measure. */
+.plot .js-plotly-plot, .plot .plot-container { width: 100% !important; }
+
+/* --- motion ------------------------------------------------------------- */
+
+/* Results panels arrive one after another, not as one block. */
+.panels .panel { animation: pop-in .32s cubic-bezier(.22,1,.36,1) backwards; }
+.panels .panel:nth-child(2) { animation-delay: .05s; }
+.panels .panel:nth-child(3) { animation-delay: .10s; }
+.panels .panel:nth-child(4) { animation-delay: .15s; }
+.panels .panel:nth-child(5) { animation-delay: .20s; }
+.panels .panel:nth-child(n+6) { animation-delay: .25s; }
+.panel { transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+.panel:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+
+/* Rows respond to the pointer, and the selected one is unmistakable. */
+tr.clickable { transition: background .15s ease; }
+tr.clickable:hover td { background: var(--line-2); }
+tr.clickable.pick td { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+tr.clickable.vs td { box-shadow: inset 3px 0 0 var(--warn); }
+tr.clickable.hover td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* The active step's underline slides between tabs. */
+.stepper { position: sticky; }
+.step-indicator {
+  position: absolute; bottom: 0; height: 2px; background: var(--accent);
+  transition: left .28s cubic-bezier(.22,1,.36,1), width .28s cubic-bezier(.22,1,.36,1);
+  pointer-events: none;
+}
+
+/* Toast slides up rather than popping. */
+.toast { animation: toast-in .24s cubic-bezier(.22,1,.36,1) backwards; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (max-width: 720px) {
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+  }
+}
+
+/* Numbers that just changed glow briefly. */
+@keyframes tick { from { color: var(--accent); } to { color: inherit; } }
+.ticked { animation: tick .8s ease; }
+
+/* A card whose numbers are being refreshed says so without a spinner. */
+.card.busy { position: relative; }
+.card.busy::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 200% 100%; animation: sweep 1s linear infinite;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+@keyframes sweep { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Compare strip above the results. */
+.compare-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 8px 12px; border: 1px dashed var(--warn);
+  border-radius: var(--radius); font-size: 12.5px; color: var(--ink-2);
+  animation: pop-in .26s ease backwards;
+}
+.compare-strip b { color: var(--ink); }
+
+/* Variables preview: the core band inside each grain. */
+.var-preview { margin-top: 6px; }
+.var-preview svg { width: 100%; height: auto; display: block; }
+.var-preview .cap { font-size: 11.5px; color: var(--ink-3); margin: 8px 0 0; font-family: var(--mono); }
+td.acts { white-space: nowrap; }
+td.acts .chip + .chip { margin-left: 4px; }

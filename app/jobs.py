@@ -56,6 +56,8 @@ class Job:
     #: stays a fixed size.
     telemetry: Optional[Dict] = None
     trace: List[Dict] = field(default_factory=list)
+    #: Highest-scoring legal design seen so far, with its vector and count.
+    best: Optional[Dict] = None
     #: Simulations counted at the last snapshot, for the live speed reading.
     _last_count: int = 0
     _last_time: float = 0.0
@@ -66,10 +68,10 @@ class Job:
     #: The report for this run, written as soon as it finishes.
     report: Optional[Path] = None
     report_error: str = ""
-    #: One sheet per design, zipped. On request only: a browser launch each.
+    #: The per-design download, built on request only.
     bundle: Optional[Path] = None
-    #: "sheets" for the per-design PDFs, "eng" for the RASP motor files. One
-    #: at a time: both are heavy, and the screen only shows one progress bar.
+    #: "sheets" zips the PDFs, "eng" is one RASP file of every motor, "ric"
+    #: zips the openMotor files. One at a time: the screen has one bar.
     bundle_kind: str = "sheets"
     bundle_status: str = "idle"      # idle | building | ready | failed
     bundle_done: int = 0
@@ -155,13 +157,21 @@ class JobRegistry:
         def target() -> None:
             try:
                 if kind == "eng":
-                    from rocketopt.eng import build_eng_bundle
+                    from rocketopt.eng import build_eng_file
                     from rocketopt.runner import build_space
 
-                    out = out_dir / "eng-files-{}.zip".format(job.id)
-                    job.bundle = build_eng_bundle(
+                    out = out_dir / "motors-{}.eng".format(job.id)
+                    job.bundle = build_eng_file(
                         job.result.designs, build_space(job.spec, base_motor),
                         base_motor, out, on_progress=progress, workers=workers)
+                elif kind == "ric":
+                    from rocketopt.outputs import build_ric_bundle
+                    from rocketopt.runner import build_space
+
+                    out = out_dir / "ric-files-{}.zip".format(job.id)
+                    job.bundle = build_ric_bundle(
+                        job.result.designs, build_space(job.spec, base_motor),
+                        out, on_progress=progress)
                 else:
                     out = out_dir / "design-sheets-{}.zip".format(job.id)
                     job.bundle = build_bundle(
@@ -173,8 +183,10 @@ class JobRegistry:
             except Exception as exc:
                 job.bundle_status = "failed"
                 job.bundle_error = str(exc)
-                job.bundle_message = ("Could not write the .eng files" if kind == "eng"
-                                      else "Could not build the sheets")
+                job.bundle_message = {
+                    "eng": "Could not write the .eng file",
+                    "ric": "Could not write the .ric files",
+                }.get(kind, "Could not build the sheets")
                 traceback.print_exc()
 
         threading.Thread(target=target, name="bundle-" + job.id,
@@ -244,6 +256,13 @@ class JobRegistry:
                 if len(history) > 600:
                     del history[: len(history) // 2]
             snapshot["trace"] = history[-240:]
+            leader = snapshot.get("leader")
+            if leader is not None and (job.best is None
+                                       or leader["score"] > job.best["score"]):
+                job.best = dict(leader, n_grains=snapshot.get("n_grains"),
+                                generation=snapshot["generation"],
+                                seed_index=snapshot["seed_index"],
+                                stage=snapshot.get("stage", "search"))
             job.telemetry = snapshot
 
         def progress(stage: str, fraction: float, message: str) -> None:

@@ -36,6 +36,8 @@ TARGETS: List[str] = [
     "avg_thrust",
     "avg_pressure",
     "volume_loading",
+    "peak_mach",
+    "residual_pct",
 ]
 
 #: Quantities computed exactly by DesignSpace.features, so never learned.

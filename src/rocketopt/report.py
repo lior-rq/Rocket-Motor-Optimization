@@ -78,18 +78,66 @@ class ReportRun:
 # --- Display helpers ---
 
 
-def inches(value: float, places: int = 2) -> str:
-    return "{:.{}f}".format(value / IN, places)
+@dataclass
+class Units:
+    """The unit system a report is written in. Storage is SI throughout."""
+
+    length: str = "in"
+    length_scale: float = IN
+    length_places: int = 2
+    pressure: str = "psi"
+    pressure_scale: float = PA_PER_PSI
+    pressure_places: int = 0
+    flux: str = "lb/in²s"
+    flux_scale: float = LB
+    flux_places: int = 3
+
+    @classmethod
+    def from_spec(cls, spec: Optional[RunSpec]) -> "Units":
+        chosen = (spec.display_units if spec is not None else None) or {}
+        if chosen.get("length") == "mm":
+            return cls(length="mm", length_scale=0.001, length_places=1,
+                       pressure="MPa", pressure_scale=1e6, pressure_places=2,
+                       flux="kg/m²s", flux_scale=1.0, flux_places=0)
+        return cls()
 
 
-def inches_exact(value: float) -> str:
-    """Two places on the machining grid, four off it.
+#: Whichever report is being written. Set by the entry points, read by every
+#: formatter, so one choice reaches every number.
+_U = Units()
+
+
+def set_units(spec: Optional[RunSpec]) -> Units:
+    global _U
+    _U = Units.from_spec(spec)
+    return _U
+
+
+def length_unit() -> str:
+    return _U.length
+
+
+def dim(value: float, places: Optional[int] = None) -> str:
+    """A length in the report's unit, to the shop's usual places."""
+    places = _U.length_places if places is None else places
+    return "{:.{}f}".format(value / _U.length_scale, places)
+
+
+def dim_exact(value: float) -> str:
+    """Grid places on the machining grid, two more off it.
 
     1.2953 in reported as 1.30 is the number someone would then cut.
     """
-    shown = value / IN
-    return "{:.2f}".format(shown) if abs(shown * 100 - round(shown * 100)) < 1e-6 \
-        else "{:.4f}".format(shown)
+    shown = value / _U.length_scale
+    grid = 10 ** _U.length_places
+    on_grid = abs(shown * grid - round(shown * grid)) < 1e-6
+    return "{:.{}f}".format(shown, _U.length_places if on_grid
+                            else _U.length_places + 2)
+
+
+#: Kept for callers that predate the unit choice.
+inches = dim
+inches_exact = dim_exact
 
 
 def collapse(variables) -> list:
@@ -112,9 +160,9 @@ def collapse(variables) -> list:
 def display(metric: str, value: float) -> float:
     kind = OPTIMISABLE_METRICS.get(metric, {}).get("kind")
     if kind == "pressure":
-        return value / PA_PER_PSI
+        return value / _U.pressure_scale
     if kind == "mass_flux":
-        return value / LB
+        return value / _U.flux_scale
     return value
 
 
@@ -123,7 +171,21 @@ def metric_label(metric: str) -> str:
 
 
 def metric_unit(metric: str) -> str:
+    kind = OPTIMISABLE_METRICS.get(metric, {}).get("kind")
+    if kind == "pressure":
+        return _U.pressure
+    if kind == "mass_flux":
+        return _U.flux
     return OPTIMISABLE_METRICS.get(metric, {}).get("unit", "")
+
+
+def metric_places(metric: str) -> int:
+    kind = OPTIMISABLE_METRICS.get(metric, {}).get("kind")
+    if kind == "pressure":
+        return _U.pressure_places
+    if kind == "mass_flux":
+        return _U.flux_places
+    return int(OPTIMISABLE_METRICS.get(metric, {}).get("places", 0))
 
 
 def esc(text) -> str:
@@ -220,18 +282,18 @@ def _kn_sweep(space: DesignSpace, spec: RunSpec) -> Optional[Dict]:
     # Smallest throat that would put the *lowest* achievable area under the limit
     min_throat = math.sqrt(4 * area.min() / kn_limit / math.pi)
     return {
-        "throat_in": throat_d / IN,
-        "throat_area_in2": throat_area / IN**2,
+        "throat_in": throat_d / _U.length_scale,
+        "throat_area_in2": throat_area / _U.length_scale**2,
         "kn_limit": kn_limit,
-        "area_cap_in2": kn_limit * throat_area / IN**2,
-        "cores_in": (cores / IN).tolist(),
+        "area_cap_in2": kn_limit * throat_area / _U.length_scale**2,
+        "cores_in": (cores / _U.length_scale).tolist(),
         "kn": kn.tolist(),
         "kn_min": float(kn.min()),
-        "area_min_in2": float(area.min() / IN**2),
+        "area_min_in2": float(area.min() / _U.length_scale**2),
         "grows_with_core": bool(length > core.high),
-        "min_throat_in": min_throat / IN,
-        "grain_diameter_in": diameter / IN,
-        "grain_length_in": length / IN,
+        "min_throat_in": min_throat / _U.length_scale,
+        "grain_diameter_in": diameter / _U.length_scale,
+        "grain_length_in": length / _U.length_scale,
         "n_grains": n,
     }
 
@@ -321,9 +383,9 @@ def make_figures(runs: Sequence[ReportRun], base_motor: Dict,
                 kn = np.array(sweep["kn"])
                 ax.fill_between(sweep["cores_in"], sweep["kn_limit"], kn,
                                 where=(kn >= sweep["kn_limit"]), color=LIMIT, alpha=0.10)
-                ax.set_xlabel("Core diameter, every grain (in)")
-                ax.set_ylabel("Kn with the {} in throat".format(
-                    "{:.4f}".format(sweep["throat_in"]).rstrip("0").rstrip(".")))
+                ax.set_xlabel("Core diameter, every grain ({})".format(_U.length))
+                ax.set_ylabel("Kn with the {} {} throat".format(
+                    "{:.4f}".format(sweep["throat_in"]).rstrip("0").rstrip("."), _U.length))
                 ax.set_title("No core diameter keeps Kn legal, even before the burn starts")
                 _tidy(ax)
                 made[key + "_infeasible"] = _save(fig, out_dir / (key + "_infeasible.png"))
@@ -360,6 +422,7 @@ def build_report(runs: Sequence[ReportRun], base_motor: Dict, out_dir: Path,
                  figures_dir: Optional[Path] = None) -> ReportFiles:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    set_units(runs[0].spec if runs else None)
     staging_dir = tempfile.TemporaryDirectory(prefix="rocketopt-report-")
     staging = Path(staging_dir.name)
     # Figures are embedded in the page either way; a caller that wants them as
@@ -404,8 +467,8 @@ def _default_title(runs: Sequence[ReportRun], base_motor: Dict) -> str:
         cls = "".join(c for c in designs[0].get("designation", "") if c.isalpha())[:1]
         if cls:
             return "{}-Class Trade Study".format(cls)
-    bore = base_motor["grains"][0]["properties"]["diameter"] / IN
-    return "{:.2f}-Inch Motor Study".format(bore)
+    bore = base_motor["grains"][0]["properties"]["diameter"]
+    return "{}-{} Motor Study".format(dim(bore), "Inch" if _U.length == "in" else "mm")
 
 
 def _header(title, runs, base_motor, grain, baseline) -> str:
@@ -423,12 +486,13 @@ def _header(title, runs, base_motor, grain, baseline) -> str:
     else:
         lede += " The result is a trade-off rather than a single motor."
     return """<header>
-  <p class="eyebrow">openMotor · {n} × BATES {d} × {l} in · {prop} · {brief}</p>
+  <p class="eyebrow">openMotor · {n} × BATES {d} × {l} {u} · {prop} · {brief}</p>
   <h1>{title}</h1>
   <p class="byline">Created by {author} · {date}</p>
   <p class="lede">{lede}</p>
-</header>""".format(n=len(base_motor["grains"]), d=inches(grain["diameter"]),
-                    l=inches(grain["length"]), prop=esc(base_motor["propellant"]["name"]),
+</header>""".format(n=len(base_motor["grains"]), d=dim(grain["diameter"]),
+                    l=dim(grain["length"]), u=_U.length,
+                    prop=esc(base_motor["propellant"]["name"]),
                     brief=esc(brief), title=esc(title), lede=esc(lede),
                     author=AUTHOR, date=_today())
 
@@ -468,14 +532,14 @@ def _fixed_section(runs, base_motor, grain, nozzle) -> str:
     counted = any(r.spec.grain_count.free for r in runs)
     if counted:
         gc = spec.grain_count
-        fixed = [("Stack length", "{} in total, cut into {}–{} grains by the "
-                  "search".format(inches(stack), gc.n_min, gc.n_max)),
-                 ("Grain outer diameter", inches(grain["diameter"]) + " in")]
+        fixed = [("Stack length", "{} {} total, cut into {}–{} grains by the "
+                  "search".format(dim(stack), _U.length, gc.n_min, gc.n_max)),
+                 ("Grain outer diameter", dim(grain["diameter"]) + " " + _U.length)]
     else:
         fixed = [("Grain count", str(n_loaded)),
-                 ("Grain outer diameter", inches(grain["diameter"]) + " in"),
-                 ("Grain length", "{} in each · {} in total".format(
-                     inches(grain["length"]), inches(stack)))]
+                 ("Grain outer diameter", dim(grain["diameter"]) + " " + _U.length),
+                 ("Grain length", "{} {u} each · {} {u} total".format(
+                     dim(grain["length"]), dim(stack), u=_U.length))]
     fixed += [("Inhibited ends", esc(grain.get("inhibitedEnds", "Neither"))),
              ("Propellant", esc(base_motor["propellant"]["name"])),
              ("Nozzle convergence / divergence", "{:.0f}° / {:.0f}°".format(
@@ -494,11 +558,12 @@ def _fixed_section(runs, base_motor, grain, nozzle) -> str:
               for c in spec.enabled_constraints]
 
     def describe(var):
+        u = _U.length
         if not var.free:
-            return "held at {} in".format(inches_exact(
-                var.fixed_value if var.fixed_value is not None else var.low))
-        step = " · {} in steps".format(inches(var.step)) if var.step else " · any size"
-        return "{} – {} in{}".format(inches(var.low), inches(var.high), step)
+            return "held at {} {}".format(dim_exact(
+                var.fixed_value if var.fixed_value is not None else var.low), u)
+        step = " · {} {} steps".format(dim(var.step), u) if var.step else " · any size"
+        return "{} – {} {}{}".format(dim(var.low), dim(var.high), u, step)
 
     variables = [(name, describe(var))
                  for name, var in collapse(runs[0].spec.variables)]
@@ -569,19 +634,20 @@ def _infeasible_section(run, key, base_motor, figures) -> str:
     parts.append("</div>")
 
     if sweep:
-        parts.append("""<div class="eq">A(d) = {n}·[ π·d·L + (π/2)·(D² − d²) ]&nbsp;&nbsp;&nbsp;with D = {D:.2f} in, L = {L:.2f} in
+        parts.append("""<div class="eq">A(d) = {n}·[ π·d·L + (π/2)·(D² − d²) ]&nbsp;&nbsp;&nbsp;with D = {D:.2f} {u}, L = {L:.2f} {u}
 dA/dd = {n}π·(L − d) &gt; 0 for every d &lt; {L:.2f} in</div>""".format(
-            n=sweep["n_grains"], D=sweep["grain_diameter_in"], L=sweep["grain_length_in"]))
+            n=sweep["n_grains"], D=sweep["grain_diameter_in"], L=sweep["grain_length_in"],
+            u=_U.length))
         parts.append("""<div class="prose" style="margin-top:22px">
-  <p>With the throat held at {t} in its area is {a:.4f} in², so a Kn of {kn:.0f}
-  caps burning area at <strong>{cap:.1f} in²</strong> at every instant of the burn.
+  <p>With the throat held at {t} {u} its area is {a:.4f} {u}², so a Kn of {kn:.0f}
+  caps burning area at <strong>{cap:.1f} {u}²</strong> at every instant of the burn.
   The derivative above is positive across the whole usable range, so the motor is
   progressive throughout — area only grows as the core opens, and Kn climbs from
   ignition to burnout. The smallest burning area available anywhere in the core range
-  is {amin:.1f} in², giving a Kn of {knmin:.0f} <em>before the burn even starts</em>.</p>
+  is {amin:.1f} {u}², giving a Kn of {knmin:.0f} <em>before the burn even starts</em>.</p>
   <p>No core diameter works. The throat has to grow.</p>
 </div>""".format(t=("{:.4f}".format(sweep["throat_in"]).rstrip("0").rstrip(".")),
-                 a=sweep["throat_area_in2"],
+                 u=_U.length, a=sweep["throat_area_in2"],
                  kn=sweep["kn_limit"], cap=sweep["area_cap_in2"],
                  amin=sweep["area_min_in2"], knmin=sweep["kn_min"]))
 
@@ -596,10 +662,10 @@ dA/dd = {n}π·(L − d) &gt; 0 for every d &lt; {L:.2f} in</div>""".format(
     if sweep:
         parts.append("""<div class="note"><span class="lbl">What it would take</span>
     <p>To hold Kn at {kn:.0f} even at the smallest achievable burning area, the throat
-    would need to be at least <strong>{need:.2f} in</strong> — about
-    <strong>{short:.2f} in</strong> wider than the one in the file. That single dimension
+    would need to be at least <strong>{need:.2f} {u}</strong> — about
+    <strong>{short:.2f} {u}</strong> wider than the one in the file. That single dimension
     is what stands between this motor and a legal one.</p></div>""".format(
-            kn=sweep["kn_limit"], need=sweep["min_throat_in"],
+            kn=sweep["kn_limit"], need=sweep["min_throat_in"], u=_U.length,
             short=sweep["min_throat_in"] - sweep["throat_in"]))
     if run.spec.grain_count.free:
         parts.append(_counts_section(run))
@@ -618,7 +684,8 @@ def _feasible_section(run, key, base_motor, figures) -> str:
     head = ["#", "Class"] + (["Grains"] if counted else [])
     head += ["{}<span>{}</span>".format(metric_label(m), metric_unit(m)) for m in metrics]
     head += ["ISP<span>s</span>", "Burn<span>s</span>", "Propellant<span>kg</span>",
-             "Peak<span>psi</span>", "Peak<span>Kn</span>", "Flux<span>lb/in²s</span>"]
+             "Peak<span>{}</span>".format(_U.pressure), "Peak<span>Kn</span>",
+             "Flux<span>{}</span>".format(_U.flux)]
     rows = []
     for i, o in enumerate(options, 1):
         cells = ['<td class="idx">{}</td>'.format(i),
@@ -627,13 +694,16 @@ def _feasible_section(run, key, base_motor, figures) -> str:
             cells.append('<td class="n">{}</td>'.format(o.get("n_grains", "")))
         for j, m in enumerate(metrics):
             cls = "n strong" if j == 0 else "n"
-            cells.append('<td class="{}">{:,.0f}</td>'.format(cls, display(m, o[m])))
+            cells.append('<td class="{}">{:,.{}f}</td>'.format(
+                cls, display(m, o[m]), metric_places(m)))
         cells += ['<td class="n">{:.1f}</td>'.format(o["isp"]),
                   '<td class="n">{:.2f}</td>'.format(o["burn_time"]),
                   '<td class="n">{:.2f}</td>'.format(o["prop_mass"]),
-                  '<td class="n">{:.0f}</td>'.format(o["max_pressure_psi"]),
+                  '<td class="n">{:.{}f}</td>'.format(
+                      display("max_pressure", o["max_pressure"]), _U.pressure_places),
                   '<td class="n">{:.0f}</td>'.format(o["peak_kn"]),
-                  '<td class="n">{:.3f}</td>'.format(o["mass_flux_lb"])]
+                  '<td class="n">{:.{}f}</td>'.format(
+                      display("peak_mass_flux", o["peak_mass_flux"]), _U.flux_places)]
         rows.append('<tr{}>{}</tr>'.format(' class="pick"' if i - 1 == pick else "",
                                            "".join(cells)))
 
@@ -643,25 +713,25 @@ def _feasible_section(run, key, base_motor, figures) -> str:
                     '<td class="n">{t}</td><td class="n">{e}</td><td class="n">{tl}</td>'
                     '<td class="n">{x:.2f}</td><td class="n">{pt:.2f}</td></tr>'.format(
                         hi=' class="pick"' if i - 1 == pick else "", i=i,
-                        c=" · ".join(inches(c) for c in o["cores"]),
-                        t=inches(o["throat"]), e=inches(o["exit"]),
-                        tl=inches(o.get("throat_length", 0.0)),
+                        c=" · ".join(dim(c) for c in o["cores"]),
+                        t=dim(o["throat"]), e=dim(o["exit"]),
+                        tl=dim(o.get("throat_length", 0.0)),
                         x=(o["exit"] / o["throat"]) ** 2, pt=o["port_throat"]))
 
     best = options[pick]
     detail = [("Designation", esc(best.get("designation", "")))]
     if counted:
         lengths = best.get("grain_lengths") or []
-        detail.append(("Grains", "{} × {} in".format(
+        detail.append(("Grains", "{} × {} {}".format(
             best.get("n_grains", len(best["cores"])),
-            inches(lengths[0]) if lengths else "?")))
-    detail += [("Core diameters", " · ".join(inches(c) for c in best["cores"]) + " in"),
-              ("Throat / exit / length", "{} / {} / {} in".format(
-                  inches(best["throat"]), inches(best["exit"]),
-                  inches(best.get("throat_length", 0.0))))]
+            dim(lengths[0]) if lengths else "?", _U.length)))
+    detail += [("Core diameters", " · ".join(dim(c) for c in best["cores"]) + " " + _U.length),
+              ("Throat / exit / length", "{} / {} / {} {}".format(
+                  dim(best["throat"]), dim(best["exit"]),
+                  dim(best.get("throat_length", 0.0)), _U.length))]
     for m in metrics:
-        detail.append((metric_label(m), "{:,.0f} {}".format(
-            display(m, best[m]), metric_unit(m))))
+        detail.append((metric_label(m), "{:,.{}f} {}".format(
+            display(m, best[m]), metric_places(m), metric_unit(m))))
     detail += [("Specific impulse", "{:.1f} s".format(best["isp"])),
                ("Burn time", "{:.2f} s".format(best["burn_time"])),
                ("Propellant mass", "{:.2f} kg".format(best["prop_mass"]))]
@@ -680,9 +750,9 @@ def _feasible_section(run, key, base_motor, figures) -> str:
     <thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div>
   <div class="scroll"><table>
     <caption>Geometry for the same options. Cores run forward to aft.</caption>
-    <thead><tr><th class="n">#</th><th>Core diameters (in)</th>
-    <th class="n">Throat<span>in</span></th><th class="n">Exit<span>in</span></th>
-    <th class="n">Throat len<span>in</span></th><th class="n">Expansion</th>
+    <thead><tr><th class="n">#</th><th>Core diameters ({u})</th>
+    <th class="n">Throat<span>{u}</span></th><th class="n">Exit<span>{u}</span></th>
+    <th class="n">Throat len<span>{u}</span></th><th class="n">Expansion</th>
     <th class="n">Port/throat</th></tr></thead><tbody>{geom}</tbody></table></div>
   {curves}
   <h3 style="margin-top:34px">The balanced pick</h3>
@@ -693,7 +763,7 @@ def _feasible_section(run, key, base_motor, figures) -> str:
         label=esc(run.label), n=len(designs), n2=len(options), pick=pick + 1,
         head="".join("<th class=\"n\">{}</th>".format(h) if h != "Class" else "<th>Class</th>"
                      for h in head),
-        rows="".join(rows), geom="".join(geom),
+        rows="".join(rows), geom="".join(geom), u=_U.length,
         counts=_counts_section(run) if counted else "",
         front='<figure><img src="{}" alt="Trade-off curve of the legal designs."><figcaption>'
               'Every legal design found, with the tabulated options marked.</figcaption></figure>'.format(
@@ -742,21 +812,21 @@ def _counts_section(run: ReportRun) -> str:
             '<td class="{cls}">{outcome}</td><td class="n">{score}</td>'
             '<td class="des">{note}</td><td class="n">{sims:,}</td></tr>'.format(
                 hi=' class="pick"' if st.get("carried") else "", n=st["n"],
-                l=inches(st.get("grain_length", 0.0)),
+                l=dim(st.get("grain_length", 0.0)),
                 cls="strong" if st.get("carried") else "des",
                 outcome=outcome, score=score, note=esc(note),
                 sims=int(st.get("simulations", 0))))
     metric = "hypervolume of its front" if multi else "best legal score"
     return """<h3 style="margin-top:34px">Grain counts</h3>
-  <div class="prose"><p>The {stack} in stack was cut into each count below. Every count
+  <div class="prose"><p>The {stack} stack was cut into each count below. Every count
   was checked on paper first, then given {gens} generations; the best {carry} went on to
   the full search. Score is the {metric} after those {gens} generations, on the same
   axes for every count.</p></div>
   <div class="scroll"><table>
-    <thead><tr><th class="n">Grains</th><th class="n">Length<span>in each</span></th>
+    <thead><tr><th class="n">Grains</th><th class="n">Length<span>{u} each</span></th>
     <th>Outcome</th><th class="n">Score</th><th>Why</th>
     <th class="n">Simulations</th></tr></thead><tbody>{rows}</tbody></table></div>""".format(
-        stack=inches(info.get("stack_length", 0.0)),
+        stack=dim(info.get("stack_length", 0.0)) + " " + _U.length, u=_U.length,
         gens=info.get("stage_generations", ""), carry=len(info.get("carried", [])),
         metric=metric, rows="".join(rows))
 

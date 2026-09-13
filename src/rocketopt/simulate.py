@@ -38,12 +38,17 @@ class Metrics:
     max_pressure: float = 0.0
     avg_pressure: float = 0.0
     peak_mass_flux: float = 0.0
+    #: Fastest the gas moves down any core, as a Mach number. openMotor only
+    #: warns past 1, so the search MUST hold it itself.
+    peak_mach: float = 0.0
     port_throat: float = 0.0
     prop_mass: float = 0.0
     volume_loading: float = 0.0
     initial_kn: float = 0.0
     peak_kn: float = 0.0
     separation_pct: float = 0.0
+    #: Propellant left when the motor quits, as a share of the load.
+    residual_pct: float = 0.0
     designation: str = ""
     n_warnings: int = 0
     warnings: List[str] = field(default_factory=list)
@@ -53,6 +58,14 @@ class Metrics:
         row = asdict(self)
         row["warnings"] = "; ".join(self.warnings)
         return row
+
+
+def _residual_pct(result) -> float:
+    """Sliver mass at the last step over the loaded mass, in percent."""
+    loaded = float(result.getPropellantMass())
+    if loaded <= 0:
+        return 0.0
+    return 100.0 * max(float(result.getPropellantMass(-1)), 0.0) / loaded
 
 
 def simulate_motor(motor_dict: Dict, timestep: float | None = None) -> Metrics:
@@ -115,6 +128,7 @@ def simulate_motor(motor_dict: Dict, timestep: float | None = None) -> Metrics:
         max_pressure=float(result.getMaxPressure()),
         avg_pressure=float(result.getAveragePressure()),
         peak_mass_flux=float(result.getPeakMassFlux()),
+        peak_mach=float(result.getPeakMachNumber()),
         port_throat=float(result.getPortRatio()),
         prop_mass=float(result.getPropellantMass()),
         volume_loading=float(result.getVolumeLoading()),
@@ -127,6 +141,7 @@ def simulate_motor(motor_dict: Dict, timestep: float | None = None) -> Metrics:
                 * result.motor.config.getProperty("ambPressure"),
             )
         ),
+        residual_pct=_residual_pct(result),
         designation=str(result.getFullDesignation()),
         n_warnings=len(warnings_list),
         warnings=warnings_list,
@@ -184,6 +199,7 @@ def curves(motor_dict: Dict, timestep: float = 0.002) -> Dict:
         "kn": series("kn").tolist(),
         "exit_pressure": series("exitPressure").tolist(),
         "mass_flux": [row.tolist() for row in per_grain("massFlux")][:n_grains],
+        "mach": [row.tolist() for row in per_grain("machNumber")][:n_grains],
         "regression": [row.tolist() for row in per_grain("regression")][:n_grains],
         "ok": bool(result.success),
     }

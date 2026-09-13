@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
+import zipfile
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Sequence
 
 
 from .design import DesignSpace
 from .ric import save_ric
 from .runner import motor_for
+from .spec import MAX_DESIGNS
 
 #: Written on every rewrite so it is obvious the folder is disposable.
 README = """This folder is the output of the last optimisation, and only the last one.
@@ -64,9 +67,7 @@ def write_run(result, base_motor: Dict, space: Optional[DesignSpace],
             x = design.get("x")
             if not x:
                 continue
-            name = "".join(c for c in str(design.get("designation", ""))
-                           if c.isalnum()) or "design"
-            target = motors / "{:02d}-{}.ric".format(index + 1, name)
+            target = motors / ric_name(design, index)
             try:
                 save_ric(target, motor_for(design, space))
                 written.append(target)
@@ -85,3 +86,33 @@ def write_run(result, base_motor: Dict, space: Optional[DesignSpace],
             written.append(target)
 
     return written
+
+
+def ric_name(design: Dict, index: int) -> str:
+    name = "".join(c for c in str(design.get("designation", ""))
+                   if c.isalnum()) or "design"
+    return "{:02d}-{}.ric".format(index + 1, name)
+
+
+def build_ric_bundle(designs: Sequence[Dict], space: DesignSpace, out_path: Path,
+                     on_progress: Callable[[int, int, str], None] = lambda *a: None
+                     ) -> Path:
+    """Zips one ``.ric`` per design at ``out_path``. No simulation: a design
+    already carries its motor, so this is fast."""
+    designs = list(designs)[:MAX_DESIGNS]
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not any(d.get("x") for d in designs):
+        raise ValueError("That run found no legal designs.")
+    total = len(designs)
+    with tempfile.TemporaryDirectory() as folder, \
+            zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        # Numbered as the options table is, so a file matches its row.
+        for index, design in enumerate(designs):
+            if not design.get("x"):
+                continue
+            name = ric_name(design, index)
+            target = save_ric(Path(folder) / name, motor_for(design, space))
+            archive.write(target, name)
+            on_progress(index + 1, total, "Wrote {} of {}".format(index + 1, total))
+    return out_path

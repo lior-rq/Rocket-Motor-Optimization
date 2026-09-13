@@ -28,8 +28,8 @@ from rocketopt.simulate import PA_PER_PSI, curves, simulate_motor
 from rocketopt.sizing import reduction_chain, size_space
 from rocketopt.tolerance import (TOLERANCE_FIELDS, ToleranceSpec,
                                  default_tolerances, propagate, summarise)
-from rocketopt.spec import (EFFORT_LEVELS, OPTIMISABLE_METRICS, ORDERING_MODES,
-                            RunSpec)
+from rocketopt.spec import (EFFORT_LEVELS, MAX_DESIGNS, OPTIMISABLE_METRICS,
+                            ORDERING_MODES, RunSpec)
 from rocketopt.units import KG_M2S_PER_LB_IN2S
 
 
@@ -96,13 +96,17 @@ def motor_summary(motor: Dict) -> Dict:
         "inhibited_ends": grains[0]["properties"].get("inhibitedEnds", "Neither"),
         "designation": metrics.designation,
         "ok": metrics.ok,
+        # Every metric the search can target, in SI, under its own name.
+        **{k: getattr(metrics, k, None) for k in OPTIMISABLE_METRICS},
         "initial_thrust": metrics.initial_thrust,
         "total_impulse": metrics.total_impulse,
         "isp": metrics.isp,
         "burn_time": metrics.burn_time,
+        "max_pressure": metrics.max_pressure,
         "max_pressure_psi": metrics.max_pressure / PA_PER_PSI,
         "peak_kn": metrics.peak_kn,
         "initial_kn": metrics.initial_kn,
+        "peak_mass_flux": metrics.peak_mass_flux,
         "mass_flux_lb": metrics.peak_mass_flux / KG_M2S_PER_LB_IN2S,
         "port_throat": metrics.port_throat,
         "prop_mass": metrics.prop_mass,
@@ -463,7 +467,7 @@ def _estimate(spec: RunSpec) -> Dict:
     budget = spec.budget
     free = max(1, sum(1 for v in spec.variables if v.free))
     # Verification plus two sensitivity runs per free dimension.
-    verified = 60 + 2 * free
+    verified = MAX_DESIGNS + 2 * free
     predicted, overhead = 0, FIXED_OVERHEAD
 
     if spec.mode == "pareto":
@@ -618,7 +622,7 @@ def get_report(job_id: str) -> Response:
 
 @app.post("/api/jobs/{job_id}/bundle")
 def start_bundle(job_id: str, kind: str = "sheets") -> JSONResponse:
-    """Begins building a per-design download: PDF sheets, or RASP .eng files."""
+    """Begins a per-design download: PDF sheets, one RASP .eng, or .ric files."""
     motor = _require_motor()
     job = jobs.get(job_id)
     if job is None:
@@ -628,7 +632,7 @@ def start_bundle(job_id: str, kind: str = "sheets") -> JSONResponse:
     if not job.result.designs:
         raise HTTPException(
             409, "That run found no legal designs, so there is nothing to write.")
-    if kind not in ("sheets", "eng"):
+    if kind not in ("sheets", "eng", "ric"):
         raise HTTPException(400, "Unknown download {!r}.".format(kind))
     jobs.start_bundle(job, motor, ROOT / "reports", kind=kind,
                       workers=machine_summary()["default_workers"])
@@ -637,14 +641,15 @@ def start_bundle(job_id: str, kind: str = "sheets") -> JSONResponse:
 
 @app.get("/api/jobs/{job_id}/bundle")
 def bundle_status(job_id: str) -> Response:
-    """The zip, once it is ready; its progress until then."""
+    """The file, once it is ready; its progress until then."""
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "Run {} is no longer held.".format(job_id))
     if job.bundle_status != "ready" or job.bundle is None:
         return JSONResponse(job.status_dict())
+    media = ("text/plain" if job.bundle.suffix == ".eng" else "application/zip")
     return Response(
-        content=job.bundle.read_bytes(), media_type="application/zip",
+        content=job.bundle.read_bytes(), media_type=media,
         headers={"Content-Disposition":
                  'attachment; filename="{}"'.format(job.bundle.name),
                  "X-Bundle-Kind": job.bundle_kind})
@@ -666,7 +671,23 @@ def job_live(job_id: str) -> JSONResponse:
         raise HTTPException(404, "No such run.")
     status = job.status_dict()
     status["telemetry"] = job.telemetry
+    status["best"] = job.best
     return JSONResponse(jsonable(status))
+
+
+@app.get("/api/jobs/{job_id}/best.ric")
+def job_best(job_id: str) -> Response:
+    """The best legal motor the run has found so far, as a .ric."""
+    motor = _require_motor()
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "No such run.")
+    if job.best is None:
+        raise HTTPException(409, "No legal design has been found yet.")
+    text = _ric_text(job.spec, job.best["x"], job.best.get("n_grains"), motor)
+    return Response(content=text, media_type="application/x-yaml",
+                    headers={"Content-Disposition":
+                             'attachment; filename="best-so-far.ric"'})
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -694,20 +715,25 @@ class ExportPayload(BaseModel):
     name: Optional[str] = None
 
 
-@app.post("/api/export")
-def export_design(payload: ExportPayload) -> Response:
-    """Hands back a .ric the user can open straight in openMotor."""
-    motor = _require_motor()
-    spec = RunSpec.from_dict(payload.spec)
-    space = build_space(spec, motor, payload.n_grains)
+def _ric_text(spec: RunSpec, x, n_grains: Optional[int], motor: Dict) -> str:
     import numpy as np
 
-    built = space.to_motor(np.asarray(payload.x, dtype=float))
+    space = build_space(spec, motor, n_grains)
+    built = space.to_motor(np.asarray(x, dtype=float))
     with tempfile.NamedTemporaryFile("w", suffix=".ric", delete=False) as handle:
         temp_path = Path(handle.name)
     save_ric(temp_path, built)
     text = temp_path.read_text()
     temp_path.unlink(missing_ok=True)
+    return text
+
+
+@app.post("/api/export")
+def export_design(payload: ExportPayload) -> Response:
+    """Hands back a .ric the user can open straight in openMotor."""
+    motor = _require_motor()
+    spec = RunSpec.from_dict(payload.spec)
+    text = _ric_text(spec, payload.x, payload.n_grains, motor)
     filename = (payload.name or "optimized") + ".ric"
     return Response(content=text, media_type="application/x-yaml",
                     headers={"Content-Disposition":

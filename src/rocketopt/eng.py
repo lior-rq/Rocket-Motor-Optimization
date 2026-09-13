@@ -1,7 +1,8 @@
 """RASP ``.eng`` files, the format OpenRocket and RockSim read.
 
-One file per design on the trade-off curve, zipped. Every curve here is a real
-openMotor run at the verification timestep, so an ``.eng`` agrees with the
+One file holding every design on the trade-off curve: RASP allows several
+motors per file and OpenRocket lists each one. Every curve here is a real
+openMotor run at the verification timestep, so the ``.eng`` agrees with the
 numbers the report quotes for the same design.
 
 What the format cannot carry is casing mass: RASP has one total-mass field and
@@ -12,7 +13,6 @@ is the user's job before the file is trusted for an altitude simulation.
 
 from __future__ import annotations
 
-import zipfile
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
@@ -21,9 +21,10 @@ import numpy as np
 
 from .runner import motor_for
 from .simulate import curves, simulate_motor
+from .spec import MAX_DESIGNS
 
 #: Never write more than this many, matching the design sheets.
-MAX_FILES = 60
+MAX_FILES = MAX_DESIGNS
 
 #: Points kept per curve. RASP is read as a piecewise-linear table, and a few
 #: hundred samples of a five-second burn is finer than any flight simulator
@@ -149,10 +150,10 @@ def design_eng(design: Dict, index: int, motor: Dict,
                     float(prop_mass), notes)
 
 
-def build_eng_bundle(designs: Sequence[Dict], space, base_motor: Dict,
-                     out_path: Path, on_progress: ProgressFn = _noop,
-                     workers: Optional[int] = None) -> Path:
-    """Writes one ``.eng`` per design into a zip at ``out_path``.
+def build_eng_file(designs: Sequence[Dict], space, base_motor: Dict,
+                   out_path: Path, on_progress: ProgressFn = _noop,
+                   workers: Optional[int] = None) -> Path:
+    """Writes every design into one ``.eng`` at ``out_path``.
 
     Only the first few designs come back from a run with curves attached, so
     the rest are simulated here. That is one full-fidelity run each, which is
@@ -176,28 +177,29 @@ def build_eng_bundle(designs: Sequence[Dict], space, base_motor: Dict,
             done += 1
             on_progress(done, total, "Simulated {} of {}".format(done, total))
 
-    written = 0
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        for i, design in enumerate(designs):
-            text = design_eng(design, i, motors[i], measured[i])
-            if text is None:
-                continue
-            archive.writestr(_file_name(design, i), text)
-            written += 1
-        archive.writestr("README.txt", _readme(written))
+    blocks = []
+    for i, design in enumerate(designs):
+        text = design_eng(design, i, motors[i], measured[i])
+        if text is not None:
+            blocks.append(text)
+    out_path.write_text(_preamble(len(blocks)) + "".join(blocks))
     on_progress(total, total, "Ready")
     return out_path
 
 
-def _readme(count: int) -> str:
-    return (
-        "{} RASP .eng files, one per design on the trade-off curve.\n\n"
-        "Each is a real openMotor simulation at a 0.002 s timestep, so the\n"
-        "numbers agree with this run's report.\n\n"
-        "Before flying any of these in OpenRocket or RockSim: the total mass\n"
-        "in an .eng file is the propellant mass alone. This application never\n"
-        "models the case, nozzle or closures, so the hardware mass has to be\n"
-        "added by hand. Diameter and length are the grain outer diameter and\n"
-        "the grain stack length for the same reason.\n\n"
-        "To use one, drop the file into OpenRocket's user motor directory, or\n"
-        "load it from the motor selection dialog.\n".format(count))
+def _preamble(count: int) -> str:
+    lines = [
+        "{} motors, one per design on the trade-off curve.".format(count),
+        "Each is a real openMotor simulation at a 0.002 s timestep, so the",
+        "numbers agree with this run's report.",
+        "",
+        "Before flying any of these in OpenRocket or RockSim: the total mass",
+        "of each motor is the propellant mass alone. This application never",
+        "models the case, nozzle or closures, so the hardware mass has to be",
+        "added by hand. Diameter and length are the grain outer diameter and",
+        "the grain stack length for the same reason.",
+        "",
+        "Drop this file into OpenRocket's user motor directory, or load it",
+        "from the motor selection dialog; every motor in it is listed.",
+    ]
+    return "\n".join(("; " + l) if l else ";" for l in lines) + "\n"

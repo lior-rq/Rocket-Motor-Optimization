@@ -15,14 +15,14 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
 from .pdf import NoBrowser, html_to_pdf
-from .report import (ReportRun, data_uri, display, esc, inches, inches_exact,
-                     metric_label, metric_unit)
+from .report import (ReportRun, data_uri, dim, dim_exact, display, esc,
+                     length_unit, metric_label, metric_unit, set_units)
 from .report_style import CSS, FONT_LINK
-from .simulate import PA_PER_PSI
+from .spec import MAX_DESIGNS
 
 #: Never render more than this many. The front is normally a few dozen; a
 #: pathological one should not turn a button into an hour of rendering.
-MAX_SHEETS = 60
+MAX_SHEETS = MAX_DESIGNS
 
 #: Browser processes to run at once. Each costs a couple of hundred megabytes,
 #: and the render is short enough that startup dominates.
@@ -63,9 +63,9 @@ def _curve_figure(design: Dict, path: Path) -> Optional[Path]:
     top.plot(time, curves["thrust"], color=SERIES[0], linewidth=1.8)
     top.fill_between(time, curves["thrust"], color=SERIES[0], alpha=0.10)
     top.set_ylabel("Thrust (N)")
-    bottom.plot(time, [p / PA_PER_PSI for p in curves["pressure"]],
+    bottom.plot(time, [display("max_pressure", p) for p in curves["pressure"]],
                 color=SERIES[1], linewidth=1.6)
-    bottom.set_ylabel("Chamber (psi)")
+    bottom.set_ylabel("Chamber ({})".format(metric_unit("max_pressure")))
     bottom.set_xlabel("Time (s)")
     for axis in (top, bottom):
         axis.margins(x=0)
@@ -146,7 +146,7 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
     grain = grains[0]["properties"]
 
     cores = "".join(
-        "<tr><td>Grain {}</td><td class=\"n\">{}</td></tr>".format(i + 1, inches_exact(c))
+        "<tr><td>Grain {}</td><td class=\"n\">{}</td></tr>".format(i + 1, dim_exact(c))
         for i, c in enumerate(design.get("cores", [])))
 
     performance = [
@@ -161,11 +161,11 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
     perf = "".join("<dt>{}</dt><dd>{}</dd>".format(esc(k), v) for k, v in performance)
 
     geometry = [
-        ("Grain outer diameter", inches(grain["diameter"]) + " in"),
-        ("Grain length", inches(grain["length"]) + " in each"),
-        ("Throat diameter", inches_exact(design.get("throat", 0))),
-        ("Exit diameter", inches_exact(design.get("exit", 0))),
-        ("Throat length", inches_exact(design.get("throat_length", 0))),
+        ("Grain outer diameter", dim(grain["diameter"]) + " " + length_unit()),
+        ("Grain length", dim(grain["length"]) + " " + length_unit() + " each"),
+        ("Throat diameter", dim_exact(design.get("throat", 0)) + " " + length_unit()),
+        ("Exit diameter", dim_exact(design.get("exit", 0)) + " " + length_unit()),
+        ("Throat length", dim_exact(design.get("throat_length", 0)) + " " + length_unit()),
         ("Expansion ratio", "{:.2f}".format(design.get("expansion_ratio", 0))),
     ]
     geom = "".join("<dt>{}</dt><dd>{}</dd>".format(esc(k), v) for k, v in geometry)
@@ -205,7 +205,7 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
             metric_label(metrics[0]).lower(), metric_label(metrics[1]).lower())
 
     body = """<header>
-  <p class="eyebrow">{n} × BATES {d} × {l} in · {prop}</p>
+  <p class="eyebrow">{n} × BATES {d} × {l} {u} · {prop}</p>
   <h1>{title}</h1>
   <p class="byline">Created by Lior Benshoshan · from {label}</p>
   <p class="lede">One design from the trade-off curve, with the dimensions to
@@ -215,7 +215,7 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
 <section>
   <h2>Cut these</h2>
   <div class="scroll"><table>
-    <thead><tr><th>Core diameter</th><th class="n">in</th></tr></thead>
+    <thead><tr><th>Core diameter</th><th class="n">{u}</th></tr></thead>
     <tbody>{cores}</tbody>
   </table></div>
   <dl class="spec">{geom}</dl>
@@ -241,8 +241,8 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
   removed. Lior&#8217;s Really Good&#8482; Rocket Optimizer &middot; created by
   Lior Benshoshan
 </footer>""".format(
-        n=len(grains), d=inches(grain["diameter"]),
-        l=inches(grain["length"]), prop=esc(base_motor["propellant"]["name"]),
+        n=len(grains), d=dim(grain["diameter"]), u=length_unit(),
+        l=dim(grain["length"]), prop=esc(base_motor["propellant"]["name"]),
         title=esc(title), label=esc(run.label), trade=esc(trade),
         cores=cores, geom=geom, perf=perf, bars=bars, figures=figure_blocks)
 
@@ -261,6 +261,7 @@ def build_bundle(run: ReportRun, base_motor: Dict, out_path: Path,
 
     A browser launch per sheet, so progress is reported per design.
     """
+    set_units(run.spec)
     designs = run.designs[:MAX_SHEETS]
     if not designs:
         raise ValueError("That run found no legal designs, so there is nothing "

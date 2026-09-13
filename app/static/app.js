@@ -38,25 +38,61 @@ const App = (() => {
     return total;
   }
 
-  const unitScale = () => (state.unit === 'in' ? M_PER_IN : 0.001);
+  //: The two unit systems. Storage is SI throughout; these only shape what
+  //: is shown and parsed. Digits are what a shop holds: 0.01 in on a reamer,
+  //: 0.1 mm likewise; 0.01 mm would be false precision.
+  const SYSTEMS = {
+    in: { name: 'imperial',
+          length:    { scale: M_PER_IN,   label: '\u2033', sep: '',  dp: 2 },
+          pressure:  { scale: PA_PER_PSI, label: 'psi',    dp: 0 },
+          mass_flux: { scale: KG_PER_LB,  label: 'lb/in\u00b2s', dp: 3 },
+          steps: [[0, 'any'], [0.01, '0.01\u2033'], [0.05, '0.05\u2033'],
+                  [0.1, '0.1\u2033'], [0.0625, '1/16\u2033']],
+          stepHint: 'e.g. 0.05' },
+    mm: { name: 'metric',
+          length:    { scale: 0.001, label: 'mm',     sep: ' ', dp: 1 },
+          pressure:  { scale: 1e6,   label: 'MPa',    dp: 2 },
+          mass_flux: { scale: 1,     label: 'kg/m\u00b2s', dp: 0 },
+          steps: [[0, 'any'], [0.25, '0.25 mm'], [0.5, '0.5 mm'],
+                  [1, '1 mm'], [1.5, '1.5 mm']],
+          stepHint: 'e.g. 1.5' },
+  };
+  const units = () => SYSTEMS[state.unit] || SYSTEMS.in;
+  const unitScale = () => units().length.scale;
   const toDisplay = m => m / unitScale();
   const toSI = v => v * unitScale();
-  // Two places in either unit -- 0.01 in is the finest dimension anyone
-  // holds on a reamer, and 0.01 mm would be false precision.
-  const lenDigits = () => 2;
-  const fmtLen = m => toDisplay(m).toFixed(lenDigits()) + (state.unit === 'in' ? '″' : ' mm');
+  const lenDigits = () => units().length.dp;
+  const fmtLen = m => {
+    const u = units().length;
+    return toDisplay(m).toFixed(u.dp) + u.sep + u.label;
+  };
 
+  //: Pressure and mass flux follow the system; everything else is shown as
+  //: stored (N, N·s, s, kg, ratios).
+  function metricKind(metric) {
+    return (state.metrics[metric] || {}).kind;
+  }
   function metricToDisplay(metric, value) {
-    const kind = (state.metrics[metric] || {}).kind;
-    if (kind === 'pressure') return value / PA_PER_PSI;
-    if (kind === 'mass_flux') return value / KG_PER_LB;
-    return value;
+    const u = units()[metricKind(metric)];
+    return u ? value / u.scale : value;
   }
   function metricToSI(metric, value) {
-    const kind = (state.metrics[metric] || {}).kind;
-    if (kind === 'pressure') return value * PA_PER_PSI;
-    if (kind === 'mass_flux') return value * KG_PER_LB;
-    return value;
+    const u = units()[metricKind(metric)];
+    return u ? value * u.scale : value;
+  }
+  function metricUnit(metric) {
+    const u = units()[metricKind(metric)];
+    return u ? u.label : ((state.metrics[metric] || {}).unit || '');
+  }
+  function metricDigits(metric) {
+    const u = units()[metricKind(metric)];
+    return u ? u.dp : ((state.metrics[metric] || {}).places || 0);
+  }
+  //: Pressure and flux names the report understands, from the same choice.
+  function displayUnits() {
+    const u = units();
+    return { length: state.unit, pressure: u.pressure.label,
+             mass_flux: state.unit === 'in' ? 'lb/(in^2*s)' : 'kg/(m^2*s)' };
   }
 
   const $ = sel => document.querySelector(sel);
@@ -66,6 +102,36 @@ const App = (() => {
     if (html !== undefined) n.innerHTML = html;
     return n;
   };
+
+  const reducedMotion = () =>
+    window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  //: Animates a number into an element from whatever it last showed there.
+  //: ``key`` names the figure so the previous value survives a re-render.
+  const LAST = {};
+  function tweenNumber(node, key, value, format) {
+    const from = LAST[key];
+    LAST[key] = value;
+    if (from === undefined || from === value || reducedMotion() || !isFinite(from)) {
+      node.textContent = format(value);
+      return;
+    }
+    const start = performance.now(), ms = 420;
+    const ease = t => 1 - Math.pow(1 - t, 3);
+    node.classList.remove('ticked'); void node.offsetWidth; node.classList.add('ticked');
+    const frame = now => {
+      const t = Math.min((now - start) / ms, 1);
+      node.textContent = format(from + (value - from) * ease(t));
+      if (t < 1) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  //: Fires ``fn`` once typing pauses, so a keystroke never redraws the page.
+  function debounce(fn, ms) {
+    let t = null;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
 
   function toast(message, ms = 2600) {
     const node = $('#toast');
@@ -109,6 +175,7 @@ const App = (() => {
       }
     }
     state.spec = data.spec;
+    state.spec.display_units = displayUnits();
     state.motor = data.motor;
     state.metrics = data.metrics;
     state.orderingModes = data.ordering_modes;
@@ -122,20 +189,64 @@ const App = (() => {
     renderHardware();
     renderConfig();
     renderEmptyPreview();
+    // ?step=N opens on that step and ?job=ID reopens a held run, for
+    // screenshots and the field guide.
+    const query = new URLSearchParams(location.search);
+    const wanted = Number(query.get('step'));
+    if (Number.isInteger(wanted) && wanted > 0 && wanted < STEPS) {
+      state.reached = wanted;
+      goTo(wanted);
+    }
+    if (query.get('profile')) state.profile = query.get('profile');
+    if (query.get('job')) { state.reached = STEPS - 1; attachToRun(query.get('job')); }
     renderMotorPreview();
     renderBaselineBoxes();
     validate();
   }
 
+  function setUnit(unit, silent) {
+    if (!SYSTEMS[unit]) return;
+    state.unit = unit;
+    try { localStorage.setItem('units', unit); } catch (e) { /* fine */ }
+    document.querySelectorAll('.unit-toggle button').forEach(x =>
+      x.classList.toggle('active', x.dataset.unit === unit));
+    if (state.spec) state.spec.display_units = displayUnits();
+    renderStepChips();
+    if (silent && !state.motor) return;
+    if (state.motor) {
+      renderMotor(); renderHardware(); renderVariables(); renderObjectives();
+      renderConstraints(); renderOrdering(); renderTolerances();
+      renderBaselineCheck();
+      if (state.validation) renderSizing(state.validation.sizing);
+    }
+    if (state.results) renderPanels();
+    if (state.liveSnap) { state.liveRange = null; redrawLive(); }
+  }
+
+  //: The "set every step to" chips, in the active system's sizes.
+  function renderStepChips() {
+    const host = $('.quick-steps');
+    if (!host) return;
+    host.querySelectorAll('.chip[data-step]').forEach(c => c.remove());
+    units().steps.forEach(([size, label]) => {
+      const b = el('button', 'chip', label);
+      b.type = 'button';
+      b.dataset.step = String(size);
+      b.addEventListener('click', () => {
+        state.spec.variables.forEach(v => { v.step = toSI(size); });
+        renderVariables(); validate();
+      });
+      host.appendChild(b);
+    });
+  }
+
   function wireChrome() {
     document.querySelectorAll('.unit-toggle button').forEach(b =>
-      b.addEventListener('click', () => {
-        state.unit = b.dataset.unit;
-        document.querySelectorAll('.unit-toggle button').forEach(x =>
-          x.classList.toggle('active', x === b));
-        renderMotor(); renderVariables(); renderConstraints(); renderOrdering();
-        if (state.results) renderPanels();
-      }));
+      b.addEventListener('click', () => setUnit(b.dataset.unit)));
+    try { setUnit(localStorage.getItem('units') || state.unit, true); }
+    catch (e) { /* storage may be blocked; the default stands */ }
+
+    window.addEventListener('resize', debounce(placeStepIndicator, 80));
 
     $('#btnTheme').addEventListener('click', () => {
       const root = document.documentElement;
@@ -153,6 +264,8 @@ const App = (() => {
     $('#btnReportOpen').addEventListener('click', openReport);
     $('#btnBundle').addEventListener('click', () => downloadBundle('sheets'));
     on('#btnEng', 'click', () => downloadBundle('eng'));
+    on('#btnRic', 'click', () => downloadBundle('ric'));
+    on('#btnBestRic', 'click', downloadBest);
     $('#btnCancel').addEventListener('click', cancelRun);
     $('#btnLoad').addEventListener('click', () => $('#fileInput').click());
     on('#btnLoadBaseline', 'click', () => $('#fileInput').click());
@@ -171,13 +284,7 @@ const App = (() => {
     document.querySelectorAll('[data-all]').forEach(b =>
       b.addEventListener('click', () => {
         const free = b.dataset.all === 'free';
-        state.spec.variables.forEach(v => { v.free = free; });
-        renderVariables(); validate();
-      }));
-    document.querySelectorAll('.chip[data-step]').forEach(b =>
-      b.addEventListener('click', () => {
-        const inches = Number(b.dataset.step);
-        state.spec.variables.forEach(v => { v.step = inches * M_PER_IN; });
+        state.spec.variables.forEach(v => { v.free = free || (countIsFree() && isCore(v)); });
         renderVariables(); validate();
       }));
     document.querySelectorAll('[data-preset]').forEach(b =>
@@ -234,9 +341,9 @@ const App = (() => {
       ['Propellant', m.propellant],
       ['Initial thrust', Math.round(m.initial_thrust).toLocaleString() + ' N'],
       ['Total impulse', Math.round(m.total_impulse).toLocaleString() + ' N·s'],
-      ['Peak pressure', Math.round(m.max_pressure_psi) + ' psi'],
+      ['Peak pressure', fmtMetric('max_pressure', m.max_pressure)],
       ['Kn', m.initial_kn.toFixed(0) + ' → ' + m.peak_kn.toFixed(0)],
-      ['Peak mass flux', m.mass_flux_lb.toFixed(3) + ' lb/in²s']
+      ['Peak mass flux', fmtMetric('peak_mass_flux', m.peak_mass_flux)]
     ];
     $('#motorSpecs').innerHTML = rows.map(([k, v]) =>
       `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -246,9 +353,8 @@ const App = (() => {
 
   function renderHardware() {
     const m = state.motor, hw = state.hardware || {};
-    $('#hwDiameter').value = toDisplay(hw.grain_diameter || m.grain_diameter).toFixed(2);
-    $('#hwLength').value = toDisplay(hw.grain_length || m.grain_lengths[0]).toFixed(2);
-    $('#hwCount').value = String(hw.grain_count || m.grain_count);
+    $('#hwDiameter').value = toDisplay(hw.grain_diameter || m.grain_diameter).toFixed(lenDigits());
+    $('#hwLength').value = toDisplay(hw.grain_length || m.grain_lengths[0]).toFixed(lenDigits());
     $('#hwEnds').value = hw.inhibited_ends || m.inhibited_ends || 'Neither';
     // A motor that no longer matches its file has to say so, or the app is
     // quietly simulating something other than what the user opened.
@@ -296,7 +402,10 @@ const App = (() => {
     host.innerHTML = `
       <div class="big"><span class="n">${free.length + (gc.free ? 1 : 0)}</span>
         <span class="of">of ${vars.length + (gc.free ? 1 : 0)} free</span></div>
-      <div class="free-rows">${countRow}${vars.map(v => `
+      <div class="free-rows">${countRow}${(gc.free
+        ? [Object.assign({}, vars.find(isCore) || {}, { label: 'Grain cores (all)' }),
+           ...vars.filter(v => !isCore(v))]
+        : vars).map(v => `
         <div class="free-row ${v.free ? '' : 'held'}">
           <span class="k">${v.label || v.name}</span>
           <span class="v">${v.free
@@ -346,14 +455,23 @@ const App = (() => {
         : '';
     free.onchange = () => { gc.free = free.checked; renderVariables(); validate(); };
     const bound = (id, key) => {
-      $(id).onchange = () => {
+      const take = () => {
         const v = parseInt($(id).value, 10);
         if (!isNaN(v) && v > 0) gc[key] = v;
         if (gc.n_max < gc.n_min) gc[key === 'n_min' ? 'n_max' : 'n_min'] = gc[key];
-        renderVariables(); validate();
       };
+      $(id).oninput = debounce(() => { take(); renderVarPreview(); renderFreeSummary(); validate(); }, 160);
+      $(id).onchange = () => { take(); renderVariables(); validate(); };
     };
     bound('#gcMin', 'n_min'); bound('#gcMax', 'n_max');
+  }
+
+  const isCore = v => v.name.startsWith('core');
+
+  //: With the count free there may be any number of grains, so the cores
+  //: share one row and one set of bounds. Every core is then free.
+  function countIsFree() {
+    return !!(state.spec.grain_count && state.spec.grain_count.free);
   }
 
   function renderVariables() {
@@ -361,22 +479,37 @@ const App = (() => {
     renderGrainCount();
     const body = $('#varRows');
     body.innerHTML = '';
-    state.spec.variables.forEach((v, i) => {
+    const vars = state.spec.variables;
+    const collapse = countIsFree();
+    if (collapse) vars.forEach(v => { if (isCore(v)) v.free = true; });
+    // Each row edits a group of variables: every core at once when collapsed.
+    const rows = [];
+    vars.forEach((v, i) => {
+      if (collapse && isCore(v)) {
+        if (!rows.some(r => r.shared)) rows.push({ shared: true, v, label: 'Grain cores (all)' });
+        return;
+      }
+      rows.push({ shared: false, v, label: v.label || v.name, i });
+    });
+    rows.forEach((row, r) => {
+      const v = row.v;
       const tr = el('tr', v.free ? '' : 'fixed');
       const dp = lenDigits();
+      const lock = row.shared ? 'disabled title="Every core is free while the count is"' : '';
       tr.innerHTML = `
-        <td><input type="checkbox" ${v.free ? 'checked' : ''} data-i="${i}" data-k="free"></td>
-        <td class="var-name">${v.label || v.name}</td>
-        <td><input type="text" value="${toDisplay(v.low).toFixed(dp)}" data-i="${i}" data-k="low" ${v.free ? '' : 'disabled'}></td>
-        <td><input type="text" value="${toDisplay(v.high).toFixed(dp)}" data-i="${i}" data-k="high" ${v.free ? '' : 'disabled'}></td>
-        <td><input type="text" value="${v.step ? toDisplay(v.step).toFixed(dp) : ''}" placeholder="any" data-i="${i}" data-k="step" ${v.free ? '' : 'disabled'}></td>`;
+        <td><input type="checkbox" ${v.free ? 'checked' : ''} data-r="${r}" data-k="free" ${lock}></td>
+        <td class="var-name">${row.label}</td>
+        <td><input type="text" value="${toDisplay(v.low).toFixed(dp)}" data-r="${r}" data-k="low" ${v.free ? '' : 'disabled'}></td>
+        <td><input type="text" value="${toDisplay(v.high).toFixed(dp)}" data-r="${r}" data-k="high" ${v.free ? '' : 'disabled'}></td>
+        <td><input type="text" value="${v.step ? toDisplay(v.step).toFixed(dp) : ''}" placeholder="any" data-r="${r}" data-k="step" ${v.free ? '' : 'disabled'}></td>`;
       body.appendChild(tr);
     });
-    body.querySelectorAll('input').forEach(input => {
-      input.addEventListener('change', () => {
-        const v = state.spec.variables[Number(input.dataset.i)];
-        const key = input.dataset.k;
-        if (key === 'free') { v.free = input.checked; renderVariables(); }
+    const apply = input => {
+      const row = rows[Number(input.dataset.r)];
+      const targets = row.shared ? vars.filter(isCore) : [row.v];
+      const key = input.dataset.k;
+      targets.forEach(v => {
+        if (key === 'free') v.free = input.checked;
         else if (key === 'step') {
           const parsed = parseNumber(input.value);
           v.step = isNaN(parsed) ? 0 : toSI(parsed);
@@ -384,9 +517,78 @@ const App = (() => {
           const parsed = parseNumber(input.value);
           if (!isNaN(parsed)) v[key] = toSI(parsed);
         }
+      });
+      return key;
+    };
+    // Typing updates the model, the preview and the counts as it goes; the
+    // table itself only redraws on commit, so the caret is never lost.
+    const live = debounce(input => { apply(input); renderVarPreview(); renderFreeSummary(); validate(); }, 160);
+    body.querySelectorAll('input[type="text"]').forEach(input =>
+      input.addEventListener('input', () => live(input)));
+    body.querySelectorAll('input').forEach(input => {
+      input.addEventListener('change', () => {
+        const key = apply(input);
+        if (key === 'free') renderVariables();
+        else { renderVarPreview(); renderFreeSummary(); }
         validate();
       });
     });
+    renderVarPreview();
+  }
+
+  //: The stack as the bounds describe it: every grain's outer wall, the band
+  //: a core may sit in, and where the loaded core is now. Redrawn on every
+  //: keystroke, so the bounds are seen rather than imagined.
+  function renderVarPreview() {
+    const host = $('#varPreview');
+    if (!host || !state.motor) return;
+    const m = state.motor, gc = state.spec.grain_count || {};
+    const vars = state.spec.variables;
+    const cores = vars.filter(isCore);
+    if (!cores.length) { host.innerHTML = ''; return; }
+    const stack = m.stack_length || m.grain_lengths.reduce((a, b) => a + b, 0);
+    const bore = m.grain_diameter;
+    const n = gc.free ? gc.n_max : m.grain_count;
+    const lengths = gc.free ? Array(n).fill(stack / n) : m.grain_lengths;
+    const W = 640, pad = 12, H = 150;
+    const sx = (W - 2 * pad) / stack;
+    const sy = Math.min((H - 2 * pad) / bore, sx);
+    const cy = H / 2;
+    const gap = 3;
+    let x = pad;
+    const parts = [];
+    lengths.forEach((L, i) => {
+      const v = gc.free ? cores[0] : (cores[i] || cores[0]);
+      const w = Math.max(L * sx - gap, 2);
+      const r = q => Math.max(q * sy / 2, 0);
+      const fixed = v.free ? null : (v.fixed_value !== null && v.fixed_value !== undefined
+        ? v.fixed_value : m.cores[i] || m.cores[0]);
+      parts.push(`<rect x="${x}" y="${cy - r(bore)}" width="${w}" height="${2 * r(bore)}"
+        rx="2" fill="var(--surface-2)" stroke="var(--line)"/>`);
+      if (v.free) {
+        parts.push(`<rect x="${x}" y="${cy - r(v.high)}" width="${w}" height="${2 * r(v.high)}"
+          fill="var(--accent)" opacity=".18"/>`);
+        parts.push(`<rect x="${x}" y="${cy - r(v.low)}" width="${w}" height="${2 * r(v.low)}"
+          fill="var(--accent)" opacity=".42"/>`);
+      } else {
+        parts.push(`<rect x="${x}" y="${cy - r(fixed)}" width="${w}" height="${2 * r(fixed)}"
+          fill="var(--ink-3)" opacity=".55"/>`);
+      }
+      const now = m.cores[i];
+      if (now !== undefined && !gc.free) {
+        parts.push(`<line x1="${x}" x2="${x + w}" y1="${cy - r(now)}" y2="${cy - r(now)}"
+          stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3"/>
+          <line x1="${x}" x2="${x + w}" y1="${cy + r(now)}" y2="${cy + r(now)}"
+          stroke="var(--ink)" stroke-width="1" stroke-dasharray="3 3"/>`);
+      }
+      x += L * sx;
+    });
+    const c0 = cores[0];
+    const cap = gc.free
+      ? `${gc.n_min}\u2013${gc.n_max} grains \u00b7 cores ${fmtLen(c0.low)}\u2013${fmtLen(c0.high)}`
+      : `${m.grain_count} grains \u00b7 core band per grain, dashed line is the loaded core`;
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Core bounds preview">${parts.join('')}</svg>
+      <p class="cap">${cap}</p>`;
   }
 
   function metricOptions(selected) {
@@ -414,7 +616,7 @@ const App = (() => {
         t.innerHTML = `<span class="op">target</span>
           <input type="text" data-i="${i}" data-k="target"
             value="${o.target !== null && o.target !== undefined ? metricToDisplay(o.metric, o.target) : ''}">
-          <span class="unit">${(state.metrics[o.metric] || {}).unit || ''}</span><span></span>`;
+          <span class="unit">${metricUnit(o.metric)}</span><span></span>`;
         host.appendChild(row); host.appendChild(t);
       } else host.appendChild(row);
     });
@@ -457,7 +659,7 @@ const App = (() => {
     const host = $('#constraintRows');
     host.innerHTML = '';
     state.spec.constraints.forEach((c, i) => {
-      const unit = (state.metrics[c.metric] || {}).unit || '';
+      const unit = metricUnit(c.metric);
       const shown = metricToDisplay(c.metric, c.value);
       const dp = Math.abs(shown) < 10 ? 3 : 0;
       // Two lines: the metric gets the full width so its name is never clipped,
@@ -477,6 +679,16 @@ const App = (() => {
         </div>`;
       host.appendChild(row);
     });
+    // A limit typed in is checked against the loaded motor as it is typed.
+    const liveValue = debounce(input => {
+      const c = state.spec.constraints[Number(input.dataset.i)];
+      const p = parseNumber(input.value);
+      if (isNaN(p)) return;
+      c.value = metricToSI(c.metric, p);
+      renderBaselineCheck(); renderDupes(); validate();
+    }, 160);
+    host.querySelectorAll('[data-k="value"]').forEach(input =>
+      input.addEventListener('input', () => liveValue(input)));
     host.querySelectorAll('[data-k]').forEach(input => {
       input.addEventListener('change', () => {
         const c = state.spec.constraints[Number(input.dataset.i)];
@@ -538,8 +750,9 @@ const App = (() => {
 
   function fmtMetric(metric, value) {
     const shown = metricToDisplay(metric, value);
-    const unit = (state.metrics[metric] || {}).unit || '';
-    return shown.toLocaleString(undefined, { maximumFractionDigits: 3 }) +
+    const unit = metricUnit(metric);
+    const dp = metricKind(metric) ? metricDigits(metric) : 3;
+    return shown.toLocaleString(undefined, { maximumFractionDigits: dp }) +
            (unit ? ' ' + unit : '');
   }
 
@@ -550,8 +763,8 @@ const App = (() => {
       const meta = state.toleranceFields[t.field] || {};
       // Absolute tolerances are a length; relative ones are a percentage.
       const abs = meta.kind === 'absolute';
-      const shown = abs ? toDisplay(t.sigma).toFixed(4) : (t.sigma * 100).toFixed(1);
-      const unit = abs ? (state.unit === 'in' ? '″' : 'mm') : '%';
+      const shown = abs ? toDisplay(t.sigma).toFixed(lenDigits() + 2) : (t.sigma * 100).toFixed(1);
+      const unit = abs ? units().length.label : '%';
       return `<div class="row tol ${t.enabled ? '' : 'off'}">
         <input type="checkbox" ${t.enabled ? 'checked' : ''} data-t="${i}" data-k="enabled">
         <span class="tol-name" title="${meta.help || ''}">${meta.label || t.field}</span>
@@ -612,7 +825,7 @@ const App = (() => {
     const stepInput = $('#orderingStep');
     stepInput.value = state.spec.ordering.min_step
       ? toDisplay(state.spec.ordering.min_step).toFixed(lenDigits()) : '';
-    stepInput.placeholder = state.unit === 'in' ? 'e.g. 0.05' : 'e.g. 1.5';
+    stepInput.placeholder = units().stepHint;
     stepInput.onchange = () => {
       const p = parseNumber(stepInput.value);
       state.spec.ordering.min_step = isNaN(p) ? 0 : toSI(p);
@@ -954,6 +1167,19 @@ const App = (() => {
     return Math.min(i, state.reached + 1);
   }
 
+  //: The underline under the active tab is one element that slides, rather
+  //: than a border that jumps from tab to tab.
+  function placeStepIndicator() {
+    const nav = $('#stepper');
+    if (!nav) return;
+    let bar = nav.querySelector('.step-indicator');
+    if (!bar) { bar = el('div', 'step-indicator'); nav.appendChild(bar); }
+    const active = nav.querySelector('.step-tab.active');
+    if (!active) { bar.style.width = '0'; return; }
+    bar.style.left = active.offsetLeft + 'px';
+    bar.style.width = active.offsetWidth + 'px';
+  }
+
   function goTo(i) {
     state.step = Math.max(0, Math.min(i, STEPS - 1));
     state.reached = Math.max(state.reached, state.step);
@@ -988,6 +1214,7 @@ const App = (() => {
     });
     const crumb = $('#stepCrumb');
     if (crumb) crumb.textContent = 'Step ' + (state.step + 1) + ' of ' + STEPS;
+    placeStepIndicator();
     const back = $('#btnBack'), next = $('#btnNext'), gate = $('#stepGate');
     if (!back || !next || !gate) return;
     const last = state.step === STEPS - 1;
@@ -1059,9 +1286,12 @@ const App = (() => {
     if (!d) return;
     $('#loadedName').textContent =
       'Option ' + (state.selected + 1) + (d.designation ? '  \u00b7  ' + d.designation : '');
-    $('#loadedFigs').textContent =
-      Math.round(d.initial_thrust).toLocaleString() + ' N  \u00b7  '
-      + Math.round(d.total_impulse).toLocaleString() + ' N\u00b7s';
+    const figs = $('#loadedFigs');
+    if (!figs.querySelector('.f1')) figs.innerHTML = '<span class="f1"></span>  \u00b7  <span class="f2"></span>';
+    tweenNumber(figs.querySelector('.f1'), 'loaded:thrust', d.initial_thrust,
+                v => Math.round(v).toLocaleString() + ' N');
+    tweenNumber(figs.querySelector('.f2'), 'loaded:impulse', d.total_impulse,
+                v => Math.round(v).toLocaleString() + ' N\u00b7s');
   }
 
   function renderMotorPreview() {
@@ -1072,13 +1302,6 @@ const App = (() => {
                           ['thrust', 'pressure', 'kn', 'mass_flux']);
   }
 
-  // The motor summary reports display units under its own key names.
-  const BASELINE_KEYS = {
-    max_pressure: 'max_pressure_psi', peak_mass_flux: 'mass_flux_lb',
-    port_throat: 'port_throat', peak_kn: 'peak_kn', initial_kn: 'initial_kn',
-    initial_thrust: 'initial_thrust', total_impulse: 'total_impulse',
-    isp: 'isp', burn_time: 'burn_time',
-  };
 
   function renderBaselineCheck() {
     const host = $('#baselineCheck');
@@ -1090,9 +1313,9 @@ const App = (() => {
     const num = v => v.toLocaleString(undefined, { maximumFractionDigits: 3 });
     let unknown = 0;
     const rows = state.spec.constraints.filter(c => c.enabled).map(c => {
-      const key = BASELINE_KEYS[c.metric];
-      const have = key ? m[key] : undefined;
-      if (have === undefined || have === null || Number.isNaN(have)) { unknown++; return ''; }
+      const raw = m[c.metric];
+      if (raw === undefined || raw === null || Number.isNaN(raw)) { unknown++; return ''; }
+      const have = metricToDisplay(c.metric, raw);
       const want = metricToDisplay(c.metric, c.value);
       const ok = c.op === '<=' ? have <= want : have >= want;
       return `<div class="check-row ${ok ? 'ok' : 'bad'}">
@@ -1111,12 +1334,18 @@ const App = (() => {
   let validateTimer = null;
   function validate() {
     clearTimeout(validateTimer);
+    const busy = on => ['#sizing', '#estimate', '#freeSummary'].forEach(sel => {
+      const card = $(sel) && $(sel).closest('.card');
+      if (card) card.classList.toggle('busy', on);
+    });
+    busy(true);
     validateTimer = setTimeout(async () => {
       const res = await fetch('/api/validate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ spec: state.spec })
       });
       const data = await res.json();
+      busy(false);
       const host = $('#problems');
       host.innerHTML =
         (data.problems || []).map(p => `<div class="problem err">${p}</div>`).join('') +
@@ -1186,7 +1415,7 @@ const App = (() => {
       const bits = [];
       (red.tightened && red.tightened.changes || []).forEach(c => bits.push(
         `<div class="srow"><span class="k">${c.variable === 'cores' ? 'Core ceiling' : 'Throat floor'}</span>
-         <span class="v">${(c.to / 0.0254).toFixed(2)}″</span>
+         <span class="v">${fmtLen(c.to)}</span>
          <span class="why">${c.why}</span></div>`));
       (red.equivalences || []).forEach(e => bits.push(
         `<div class="srow"><span class="k">${e.title}</span><span class="v"></span>
@@ -1231,10 +1460,11 @@ const App = (() => {
     if (!res.ok) { toast('Could not tighten those bounds.'); return; }
     const data = await res.json();
     state.spec = data.spec;
+    state.spec.display_units = displayUnits();
     renderVariables();
     validate();
     const what = (data.changes || []).map(c =>
-      `${c.variable} to ${(c.to / 0.0254).toFixed(2)}″`).join(', ');
+      `${c.variable} to ${fmtLen(c.to)}`).join(', ');
     toast(what ? `Narrowed ${what}. Nothing legal was removed.` : 'Already as tight as it gets');
   }
 
@@ -1279,6 +1509,7 @@ const App = (() => {
     $('#live').hidden = false;
     $('#liveStats').innerHTML = '';
     $('#liveNote').textContent = 'Waiting for the first generation…';
+    renderBest(null);
     goTo(RUNNING);
     state.poll = setInterval(pollJob, 900);
   }
@@ -1289,6 +1520,7 @@ const App = (() => {
     if (!res.ok) return;
     const job = await res.json();
     if (job.telemetry) renderLive(job.telemetry);
+    renderBest(job.best);
     renderRunBar(job);
     $('#progressFill').style.width = (job.fraction * 100).toFixed(1) + '%';
     $('#progressMsg').textContent = job.message + '  ·  ' + job.elapsed + 's';
@@ -1306,7 +1538,32 @@ const App = (() => {
     }
   }
 
-  function renderLive(t) {
+  //: A snapshot arrives in SI. Everything drawn from it is in display units,
+  //: so it is converted once here and the SI copy is left untouched.
+  function shownSnap(raw) {
+    const [mx, my] = raw.metrics || [];
+    const cx = v => metricToDisplay(mx, v), cy = v => metricToDisplay(my, v);
+    const t = Object.assign({}, raw);
+    t.points = (raw.points || []).map(p => [cx(p[0]), cy(p[1]), p[2]]);
+    t.front = (raw.front || []).map(p => [cx(p[0]), cy(p[1])]);
+    if (raw.best) t.best = [cy(raw.best[0]), cx(raw.best[1])];
+    t.trace = (raw.trace || []).map(r => Object.assign({}, r, { a: cy(r.a), b: cx(r.b) }));
+    if (state.motor && my && mx) {
+      const bx = state.motor[mx], by = state.motor[my];
+      if (Number.isFinite(bx) && Number.isFinite(by)) t.baseline = [cx(bx), cy(by)];
+    }
+    return t;
+  }
+
+  //: Which metric a live stat shows, by its label, so the tween can format.
+  const LIVE_METRIC = {};
+  function fmtLiveNumber(label, v) {
+    const m = LIVE_METRIC[label];
+    return v.toLocaleString(undefined, { maximumFractionDigits: m ? metricDigits(m) : 0 });
+  }
+
+  function renderLive(raw) {
+    const t = shownSnap(raw);
     const gen = t.generation || 0;
     const total = t.total_generations || 0;
     const grains = t.n_grains ? ` \u00b7 ${t.n_grains} grains` : '';
@@ -1332,22 +1589,29 @@ const App = (() => {
       ['legal', `${Math.round(100 * (t.feasible_fraction || 0))}%`, ''],
     ];
     if (t.best) {
-      stats.push([Charts.metricLabel(t.metrics[1]),
-                  Math.round(t.best[0]).toLocaleString(), 'accent']);
-      stats.push([Charts.metricLabel(t.metrics[0]),
-                  Math.round(t.best[1]).toLocaleString(), 'accent']);
+      LIVE_METRIC[Charts.metricLabel(t.metrics[1])] = t.metrics[1];
+      LIVE_METRIC[Charts.metricLabel(t.metrics[0])] = t.metrics[0];
+      stats.push([Charts.metricLabel(t.metrics[1]), t.best[0], 'accent']);
+      stats.push([Charts.metricLabel(t.metrics[0]), t.best[1], 'accent']);
     }
-    $('#liveStats').innerHTML = stats.map(([k, v, cls]) =>
-      `<div class="live-stat"><span class="k">${k}</span>
-       <span class="v ${cls}">${v}</span></div>`).join('');
+    const host = $('#liveStats');
+    // Keep the nodes between generations so the numbers can move.
+    const keys = stats.map(([k]) => k);
+    if (host.dataset.keys !== keys.join('|')) {
+      host.innerHTML = stats.map(([k, , cls]) =>
+        `<div class="live-stat"><span class="k">${k}</span>
+         <span class="v ${cls}" data-k="${k}"></span></div>`).join('');
+      host.dataset.keys = keys.join('|');
+    }
+    stats.forEach(([k, v]) => {
+      const node = host.querySelector(`.v[data-k="${k}"]`);
+      if (!node) return;
+      const numeric = typeof v === 'number';
+      if (numeric) tweenNumber(node, 'live:' + k, v, x => fmtLiveNumber(k, x));
+      else node.textContent = v;
+    });
 
-    // The loaded motor, on the same axes, so progress is always relative to it.
-    if (state.motor && t.metrics) {
-      const at = m => state.motor[BASELINE_KEYS[m] || m];
-      const bx = at(t.metrics[0]), by = at(t.metrics[1]);
-      if (Number.isFinite(bx) && Number.isFinite(by)) t.baseline = [bx, by];
-    }
-    state.liveSnap = t;
+    state.liveSnap = raw;
     if (!state.liveRange) state.liveRange = fitRange(t);
     try { Charts.liveFrame($('#livePlot'), t, state.liveRange); }
     catch (e) { console.error(e); }
@@ -1361,6 +1625,37 @@ const App = (() => {
 
   function redrawLive() {
     if (state.liveSnap) renderLive(state.liveSnap);
+  }
+
+  //: The best legal motor so far can be taken before the run ends. Mostly
+  //: for single-objective runs, where "best" is one motor, not a curve.
+  function renderBest(best) {
+    const box = $('#bestDl');
+    if (!box) return;
+    state.best = best || null;
+    box.hidden = !best;
+    if (!best) return;
+    const grains = best.n_grains ? ` \u00b7 ${best.n_grains} grains` : '';
+    const shown = metricToDisplay(best.metric, best.value).toLocaleString(
+      undefined, { maximumFractionDigits: metricDigits(best.metric) });
+    const unit = metricUnit(best.metric);
+    $('#bestMeta').textContent =
+      `${Charts.metricLabel(best.metric)} ${shown}${unit ? ' ' + unit : ''}`
+      + `${grains} \u00b7 generation ${best.generation}`;
+  }
+
+  async function downloadBest() {
+    if (!state.jobId || !state.best) return;
+    const res = await fetch('/api/jobs/' + state.jobId + '/best.ric');
+    if (!res.ok) { toast('No legal design yet.'); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'best-so-far.ric';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    toast('Saved the best motor so far. Open it in openMotor.');
   }
 
   //: Everything drawn, plus a tenth of the span so nothing sits on the frame.
@@ -1443,8 +1738,10 @@ const App = (() => {
     if (state.reportJob) window.open('/api/jobs/' + state.reportJob + '/report', '_blank');
   }
 
-  //: Both downloads share one progress bar, so only one runs at a time.
-  const BUNDLE_BUTTONS = { sheets: '#btnBundle', eng: '#btnEng' };
+  //: The downloads share one progress bar, so only one runs at a time.
+  const BUNDLE_BUTTONS = { sheets: '#btnBundle', eng: '#btnEng', ric: '#btnRic' };
+  const BUNDLE_NAMES = { sheets: 'design-sheets.zip', eng: 'motors.eng',
+                         ric: 'ric-files.zip' };
 
   function bundleButtons(disabled) {
     Object.values(BUNDLE_BUTTONS).forEach(sel => {
@@ -1474,15 +1771,15 @@ const App = (() => {
     const res = await fetch('/api/jobs/' + state.reportJob + '/bundle');
     if (!res.ok) { $('#bundleProgress').hidden = true; bundleButtons(false); return; }
 
-    // Ready, and the zip itself is the response rather than a status.
-    if ((res.headers.get('Content-Type') || '').includes('zip')) {
+    // Ready, and the file itself is the response rather than a status.
+    const disposition = res.headers.get('Content-Disposition') || '';
+    if (disposition.startsWith('attachment')) {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = (res.headers.get('Content-Disposition') || '')
-        .replace(/.*filename="([^"]+)".*/, '$1')
-        || (state.bundleKind === 'eng' ? 'eng-files.zip' : 'design-sheets.zip');
+      a.download = disposition.replace(/.*filename="([^"]+)".*/, '$1')
+        || BUNDLE_NAMES[state.bundleKind] || 'download';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 30000);
       $('#bundleFill').style.width = '100%';
@@ -1518,8 +1815,9 @@ const App = (() => {
       $('#progress').hidden = false;
       $('#btnRun').disabled = true;
       $('#runLabel').textContent = 'Working…';
-        goTo(RUNNING);
+      goTo(RUNNING);
       if (job.telemetry) renderLive(job.telemetry);
+      renderBest(job.best);
       state.poll = setInterval(pollJob, 900);
       return;
     }
@@ -1531,6 +1829,7 @@ const App = (() => {
     if (!res.ok) { toast('Could not fetch results.'); return; }
     state.results = await res.json();
     state.selected = 0;
+    state.compare = null;
     state.robustness = null;
     if (!state.results.designs.length) {
       toast(state.results.messages[0] || 'No design met every limit.', 6000);
@@ -1572,6 +1871,11 @@ const App = (() => {
     const axes = Charts.orderAxes(pair);
     return {
       design: (r.designs || [])[state.selected],
+      compare: state.compare === null || state.compare === undefined
+        ? null : (r.designs || [])[state.compare],
+      compareIndex: state.compare,
+      onCompare: compareDesign,
+      onHighlight: highlightDesign,
       designs: r.designs || [],
       baseline: r.baseline,
       population: r.population || [],
@@ -1589,11 +1893,28 @@ const App = (() => {
     };
   }
 
+  function renderCompareStrip(ctx) {
+    let strip = $('#compareStrip');
+    if (!ctx.compare) { if (strip) strip.remove(); return; }
+    if (!strip) {
+      strip = el('div', 'compare-strip');
+      strip.id = 'compareStrip';
+      $('#panels').before(strip);
+    }
+    const name = i => 'Option ' + (i + 1);
+    strip.innerHTML = `Comparing <b>${name(state.selected)}</b> with
+      <b>${name(state.compareIndex)}</b> \u2014 dashed in every curve.
+      Shift-click a row or point to compare another.
+      <button type="button" class="chip" id="btnClearCompare">Clear</button>`;
+    strip.querySelector('#btnClearCompare').addEventListener('click', () => compareDesign(null));
+  }
+
   function renderPanels() {
     const host = $('#panels');
     host.innerHTML = '';
     const profile = Charts.PROFILES.find(p => p.id === state.profile);
     const ctx = context();
+    renderCompareStrip(ctx);
     profile.panels.forEach(([id, span]) => {
       const def = Charts.PANELS[id];
       if (!def) return;
@@ -1610,28 +1931,32 @@ const App = (() => {
     });
   }
 
+  //: Only the first few designs come back with curves, so the rest are
+  //: simulated on demand; without them Design Review has nothing to draw.
+  async function ensureCurves(design, index) {
+    if (design.curves) return;
+    toast('Simulating option ' + (index + 1) + '…');
+    try {
+      const res = await fetch('/api/curves', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ spec: state.spec, x: design.x,
+                               n_grains: design.n_grains || null })
+      });
+      if (res.ok) {
+        const full = await res.json();
+        if (full.curves) design.curves = full.curves;
+      }
+    } catch (err) { /* the panels that need curves say so themselves */ }
+  }
+
   async function selectDesign(index) {
     const designs = (state.results || {}).designs || [];
     const design = designs[index];
     if (!design) return;
     state.selected = index;
+    if (state.compare === index) state.compare = null;
     state.robustness = null;   // belongs to the design it was run on
-    // Only the first few designs come back with curves, so the rest are
-    // simulated on demand; without them Design Review has nothing to draw.
-    if (!design.curves) {
-      toast('Simulating option ' + (index + 1) + '…');
-      try {
-        const res = await fetch('/api/curves', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ spec: state.spec, x: design.x,
-                                 n_grains: design.n_grains || null })
-        });
-        if (res.ok) {
-          const full = await res.json();
-          if (full.curves) design.curves = full.curves;
-        }
-      } catch (err) { /* the panels that need curves say so themselves */ }
-    }
+    await ensureCurves(design, index);
     state.profile = 'design';
     renderProfiles();
     renderPanels();
@@ -1639,7 +1964,39 @@ const App = (() => {
     toast('Option ' + (index + 1) + ' loaded as the optimized motor.');
   }
 
+  //: A second design drawn against the selected one, in every curve panel.
+  async function compareDesign(index) {
+    const designs = (state.results || {}).designs || [];
+    if (index === null || index === state.selected || !designs[index]) {
+      state.compare = null;
+    } else {
+      state.compare = index;
+      await ensureCurves(designs[index], index);
+      if (state.profile !== 'design' && state.profile !== 'compare') state.profile = 'design';
+    }
+    renderProfiles();
+    renderPanels();
+  }
+
+  //: Hovering a point on a chart lights its row in the options table, so
+  //: the same design is recognisable in both places.
+  function highlightDesign(index) {
+    document.querySelectorAll('tr.clickable').forEach(tr =>
+      tr.classList.toggle('hover', index !== null && Number(tr.dataset.index) === index));
+  }
+
   function wireOptionsTable(node) {
+    node.querySelectorAll('th[data-sort]').forEach(th =>
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        const now = state.optionSort || { key: 'rank', dir: 1 };
+        // Same column again flips the direction; a new column starts descending
+        // for metrics, since bigger is usually what is being looked for.
+        state.optionSort = now.key === key
+          ? { key, dir: -now.dir }
+          : { key, dir: key === 'rank' || key === 'n_grains' ? 1 : -1 };
+        renderPanels();
+      }));
     node.querySelectorAll('tr.clickable').forEach(tr =>
       tr.addEventListener('click', ev => {
         if (ev.target.dataset.export !== undefined) return;
@@ -1650,6 +2007,19 @@ const App = (() => {
         ev.stopPropagation();
         exportDesign(Number(b.dataset.export));
       }));
+    node.querySelectorAll('[data-compare]').forEach(b =>
+      b.addEventListener('click', ev => {
+        ev.stopPropagation();
+        const i = Number(b.dataset.compare);
+        compareDesign(state.compare === i ? null : i);
+      }));
+    // Shift-click a row to compare it instead of loading it.
+    node.querySelectorAll('tr.clickable').forEach(tr =>
+      tr.addEventListener('click', ev => {
+        if (!ev.shiftKey) return;
+        ev.stopImmediatePropagation();
+        compareDesign(Number(tr.dataset.index));
+      }, true));
   }
 
   async function exportDesign(index) {
@@ -1677,7 +2047,9 @@ const App = (() => {
     host.innerHTML = Charts.crossSectionSVG(b, b);
   }
 
-  return { boot, state, unitScale, fmtLen, selectDesign, wireOptionsTable,
+  return { boot, state, units, unitScale, fmtLen, lenDigits, metricToDisplay,
+           metricUnit, metricDigits, selectDesign, compareDesign, highlightDesign,
+           wireOptionsTable,
            parseNumber, metricToDisplay, renderTolerances };
 })();
 

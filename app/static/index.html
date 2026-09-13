@@ -75,17 +75,13 @@
         </section>
         <section class="card">
           <h2>Fixed hardware</h2>
-          <p class="hint">Read from the .ric file and never changed by this
-            application. The grain count can be handed to the optimizer on the
-            Variables page; the stack length is still held.</p>
+          <p class="hint">Read from the .ric file. Only the ends can change here.</p>
           <table class="vars hardware">
             <tbody>
               <tr><td class="var-name">Grain outer diameter</td>
                   <td><input type="text" id="hwDiameter" disabled></td></tr>
               <tr><td class="var-name">Grain length</td>
                   <td><input type="text" id="hwLength" disabled></td></tr>
-              <tr><td class="var-name">Number of grains</td>
-                  <td><input type="text" id="hwCount" disabled></td></tr>
               <tr><td class="var-name">Inhibited ends</td>
                   <td><select id="hwEnds">
                     <option value="Neither">Neither</option>
@@ -178,6 +174,10 @@
             <label for="orderingGroups">Mandrel sizes</label>
             <select id="orderingGroups"></select>
           </div>
+        </section>
+        <section class="card">
+          <h2>Bounds preview</h2>
+          <div class="var-preview" id="varPreview"></div>
         </section>
         <section class="card">
           <h2>Free dimensions</h2>
@@ -361,6 +361,10 @@
             <h2>Best so far</h2>
             <div class="live-spark" id="liveSpark"></div>
             <p class="sub" id="liveNote"></p>
+            <div class="best-dl" id="bestDl" hidden>
+              <span class="meta" id="bestMeta"></span>
+              <button type="button" class="chip" id="btnBestRic">Download it (.ric)</button>
+            </div>
           </section>
         </div>
       </div>
@@ -380,16 +384,19 @@
 
     <section class="card" id="reportCard" hidden>
       <div class="card-head">
-        <h2>Design sheets</h2>
+        <h2>Downloads</h2>
         <div class="design-actions">
           <button type="button" class="chip" id="btnReportOpen">Open this run&rsquo;s report</button>
           <button type="button" class="chip" id="btnBundle">Design sheets (.zip)</button>
-          <button type="button" class="chip" id="btnEng">Motor files (.eng)</button>
+          <button type="button" class="chip" id="btnEng">All motors (.eng)</button>
+          <button type="button" class="chip" id="btnRic">openMotor files (.zip)</button>
         </div>
       </div>
       <p class="hint">Sheets are one PDF per design with the dimensions to machine
-        to. Motor files are RASP <code>.eng</code>, which OpenRocket and RockSim read;
-        their total mass is propellant only, so add the hardware mass there.</p>
+        to. The <code>.eng</code> is one RASP file holding every design, which
+        OpenRocket and RockSim list as separate motors; total mass is propellant
+        only, so add the hardware mass there. The openMotor zip is one
+        <code>.ric</code> per design.</p>
       <div class="bundle-progress" id="bundleProgress" hidden>
         <div class="bar"><div class="fill" id="bundleFill"></div></div>
         <span class="meta" id="bundleMsg"></span>

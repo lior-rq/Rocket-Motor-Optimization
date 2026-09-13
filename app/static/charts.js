@@ -81,18 +81,15 @@ const Charts = (() => {
   }
 
   function metricValue(row, key) {
-    // Display units differ from storage units for pressure and mass flux.
-    if (key === 'max_pressure' || key === 'avg_pressure') {
-      return row[key] / 6894.757293168361;
-    }
-    if (key === 'peak_mass_flux') return row[key] / 703.0696;
-    return row[key];
+    // Storage is SI; pressure and mass flux are shown in the chosen system.
+    return App.metricToDisplay(key, row[key]);
   }
 
   function metricUnit(key) {
-    const m = (App.state.metrics || {})[key];
-    return m && m.unit ? m.unit : '';
+    return App.metricUnit(key);
   }
+
+  const U = () => App.units();
 
   /* ------------------------------------------------------------- panels */
 
@@ -112,6 +109,12 @@ const Charts = (() => {
           x: d.curves.time, y: d.curves.thrust, mode: 'lines', name: 'optimized',
           line: { color: SERIES[0], width: 2.2 }
         });
+        const c = ctx.compare;
+        if (c && c.curves) traces.push({
+          x: c.curves.time, y: c.curves.thrust, mode: 'lines',
+          name: 'Option ' + (ctx.compareIndex + 1),
+          line: { color: LIMIT, width: 2, dash: 'dash' }
+        });
         draw(node, traces, {
           showlegend: true,
           xaxis: Object.assign(theme().xaxis, { title: 'Time (s)' }),
@@ -125,25 +128,35 @@ const Charts = (() => {
       sub: 'Two stacked panels — never two scales on one axis',
       render(node, ctx) {
         const d = ctx.design; if (!d || !d.curves) return;
-        const psi = d.curves.pressure.map(p => p / 6894.757293168361);
+        const pressure = d.curves.pressure.map(p => p / U().pressure.scale);
         const t = theme();
         const traces = [
-          { x: d.curves.time, y: psi, mode: 'lines', name: 'pressure',
+          { x: d.curves.time, y: pressure, mode: 'lines', name: 'pressure',
             line: { color: SERIES[1], width: 2 }, xaxis: 'x', yaxis: 'y' },
           { x: d.curves.time, y: d.curves.kn, mode: 'lines', name: 'Kn',
             line: { color: SERIES[2], width: 2 }, xaxis: 'x2', yaxis: 'y2' }
         ];
+        const c = ctx.compare;
+        if (c && c.curves) {
+          const label = 'Option ' + (ctx.compareIndex + 1);
+          traces.push({ x: c.curves.time, y: c.curves.pressure.map(p => p / U().pressure.scale),
+            mode: 'lines', name: label + ' pressure', xaxis: 'x', yaxis: 'y',
+            line: { color: LIMIT, width: 1.6, dash: 'dash' } });
+          traces.push({ x: c.curves.time, y: c.curves.kn, mode: 'lines',
+            name: label + ' Kn', xaxis: 'x2', yaxis: 'y2',
+            line: { color: LIMIT, width: 1.6, dash: 'dash' } });
+        }
         const limits = [];
         (ctx.constraints || []).forEach(c => {
           if (c.metric === 'max_pressure')
-            limits.push(hline(c.value / 6894.757293168361, 'y'));
+            limits.push(hline(c.value / U().pressure.scale, 'y'));
           if (c.metric === 'peak_kn') limits.push(hline(c.value, 'y2'));
         });
         draw(node, traces, {
           grid: { rows: 2, columns: 1, pattern: 'independent', roworder: 'top to bottom' },
           margin: { l: 54, r: 16, t: 8, b: 38 },
           xaxis:  Object.assign({}, t.xaxis, { anchor: 'y', showticklabels: false }),
-          yaxis:  Object.assign({}, t.yaxis, { title: 'psi', domain: [0.56, 1] }),
+          yaxis:  Object.assign({}, t.yaxis, { title: U().pressure.label, domain: [0.56, 1] }),
           xaxis2: Object.assign({}, t.xaxis, { anchor: 'y2', title: 'Time (s)' }),
           yaxis2: Object.assign({}, t.yaxis, { title: 'Kn', domain: [0, 0.44] }),
           shapes: limits
@@ -183,13 +196,21 @@ const Charts = (() => {
         const designs = ctx.designs || [];
         if (!designs.length) { node.innerHTML = '<p class="sub">No feasible designs.</p>'; return; }
         const [ax, ay] = ctx.axes;
+        const sel = ctx.selected, cmp = ctx.compareIndex;
         const traces = [{
           x: designs.map(d => metricValue(d, ax)),
           y: designs.map(d => metricValue(d, ay)),
           mode: 'lines+markers', type: 'scatter',
-          marker: { size: 9, color: SERIES[0], line: { color: css('--surface'), width: 1.5 } },
+          marker: {
+            size: designs.map((_, i) => i === sel ? 15 : (i === cmp ? 13 : 9)),
+            color: designs.map((_, i) => i === cmp ? LIMIT : SERIES[0]),
+            line: { color: designs.map((_, i) => i === sel ? css('--ink') : css('--surface')),
+                    width: designs.map((_, i) => i === sel ? 2.5 : 1.5) }
+          },
           line: { color: SERIES[0], width: 1.5 },
-          text: designs.map(d => d.designation), name: 'options',
+          text: designs.map((d, i) => (d.designation || 'Option ' + (i + 1))
+            + (i === sel ? ' \u00b7 selected' : i === cmp ? ' \u00b7 comparing' : '')),
+          name: 'options',
           hovertemplate: '%{text}<br>' + metricLabel(ax) + ': %{x:,.0f}<br>' +
                          metricLabel(ay) + ': %{y:,.0f}<extra></extra>'
         }];
@@ -207,8 +228,15 @@ const Charts = (() => {
         });
         node.on('plotly_click', ev => {
           const p = ev.points[0];
-          if (p.curveNumber === 0) App.selectDesign(p.pointIndex);
+          if (p.curveNumber !== 0) return;
+          const shift = ev.event && ev.event.shiftKey;
+          if (shift) App.compareDesign(p.pointIndex); else App.selectDesign(p.pointIndex);
         });
+        node.on('plotly_hover', ev => {
+          const p = ev.points[0];
+          if (p.curveNumber === 0) App.highlightDesign(p.pointIndex);
+        });
+        node.on('plotly_unhover', () => App.highlightDesign(null));
       }
     },
 
@@ -393,17 +421,41 @@ const Charts = (() => {
         }
         const n = d.curves.mass_flux.length;
         const traces = d.curves.mass_flux.map((series, i) => ({
-          x: d.curves.time, y: series.map(v => v / 703.0696), mode: 'lines',
+          x: d.curves.time, y: series.map(v => v / U().mass_flux.scale), mode: 'lines',
           name: 'grain ' + (i + 1),
           line: { color: RAMP[Math.round(i * (RAMP.length - 1) / Math.max(n - 1, 1))], width: 1.8 }
         }));
         const limits = (ctx.constraints || [])
           .filter(c => c.metric === 'peak_mass_flux' && c.enabled)
-          .map(c => hline(c.value / 703.0696, 'y'));
+          .map(c => hline(c.value / U().mass_flux.scale, 'y'));
         draw(node, traces, {
           showlegend: true, shapes: limits,
           xaxis: Object.assign(theme().xaxis, { title: 'Time (s)' }),
-          yaxis: Object.assign(theme().yaxis, { title: 'lb/in²·s', rangemode: 'tozero' })
+          yaxis: Object.assign(theme().yaxis, { title: U().mass_flux.label, rangemode: 'tozero' })
+        });
+      }
+    },
+
+    grainMach: {
+      title: 'Core Mach in each grain',
+      sub: 'Gas speed down the port; past Mach 1 the core chokes',
+      render(node, ctx) {
+        const d = ctx.design;
+        if (!d || !d.curves || !d.curves.mach || !d.curves.mach.length) {
+          node.innerHTML = '<p class="sub">No Mach data.</p>'; return;
+        }
+        const n = d.curves.mach.length;
+        const traces = d.curves.mach.map((series, i) => ({
+          x: d.curves.time, y: series, mode: 'lines', name: 'grain ' + (i + 1),
+          line: { color: RAMP[Math.round(i * (RAMP.length - 1) / Math.max(n - 1, 1))], width: 1.8 }
+        }));
+        const limits = (ctx.constraints || [])
+          .filter(c => c.metric === 'peak_mach' && c.enabled)
+          .map(c => hline(c.value, 'y'));
+        draw(node, traces, {
+          showlegend: true, shapes: limits,
+          xaxis: Object.assign(theme().xaxis, { title: 'Time (s)' }),
+          yaxis: Object.assign(theme().yaxis, { title: 'Mach', rangemode: 'tozero' })
         });
       }
     },
@@ -528,7 +580,7 @@ const Charts = (() => {
 
     optionsTable: {
       title: 'All options found',
-      sub: 'Click a row to inspect it; export writes a .ric you can open in openMotor',
+      sub: 'Click a row to inspect it, vs to compare it, .ric to export it',
       render(node, ctx) { node.innerHTML = optionsTable(ctx); App.wireOptionsTable(node); }
     }
   };
@@ -547,7 +599,8 @@ const Charts = (() => {
                ['parity', 1], ['importance', 1]] },
     { id: 'compare',     label: 'Compare & Safety',
       panels: [['compareThrust', 2], ['specSheet', 1], ['grainFlux', 1],
-               ['robustness', 1], ['robustnessSpread', 1], ['tornado', 2]] }
+               ['grainMach', 1], ['robustness', 1], ['robustnessSpread', 1],
+               ['tornado', 2]] }
   ];
 
   /* ------------------------------------------------------------ fragments */
@@ -564,7 +617,7 @@ const Charts = (() => {
 
   function shortVar(name) {
     return name.replace('core_', 'core ').replace('exit_frac', 'exit')
-               .replace('_', ' ');
+               .replace('n_grains', 'grains').replace('_', ' ');
   }
 
   function parallelSVG(rows, vars, colourBy) {
@@ -604,8 +657,11 @@ const Charts = (() => {
     vars.forEach((v, i) => {
       const x = (padL + i * step).toFixed(1);
       const s = scales[i];
-      const fmt = q => (v === 'exit_frac' ? q.toFixed(2)
-                        : (q / App.unitScale()).toFixed(App.state.unit === 'in' ? 2 : 1));
+      // Cores, throat and lengths are metres; the exit is a fraction and the
+      // grain count is a count. Only the lengths change with the unit system.
+      const fmt = q => v === 'exit_frac' ? q.toFixed(2)
+                     : v === 'n_grains' ? String(Math.round(q))
+                     : (q / App.unitScale()).toFixed(App.lenDigits());
       axes += `<line x1="${x}" y1="${y0}" x2="${x}" y2="${y1}" stroke="var(--line)" stroke-width="1"/>
         <text x="${x}" y="${y0 - 9}" font-size="8.5" fill="var(--ink-3)" text-anchor="middle"
           font-family="ui-monospace, monospace">${fmt(s.hi)}</text>
@@ -671,12 +727,14 @@ const Charts = (() => {
     ['peak_thrust', 'Peak thrust', 'N', 0],
     ['isp', 'Specific impulse', 's', 1],
     ['burn_time', 'Burn time', 's', 2],
-    ['max_pressure_psi', 'Peak pressure', 'psi', 0],
+    ['max_pressure', 'Peak pressure', null, null],
     ['initial_kn', 'Initial Kn', '', 0],
     ['peak_kn', 'Peak Kn', '', 0],
-    ['mass_flux_lb', 'Peak mass flux', 'lb/in²s', 3],
+    ['peak_mass_flux', 'Peak mass flux', null, null],
+    ['peak_mach', 'Peak core Mach', 'M', 2],
     ['port_throat', 'Port/throat', '', 2],
-    ['prop_mass', 'Propellant', 'kg', 3]
+    ['prop_mass', 'Propellant', 'kg', 3],
+    ['residual_pct', 'Residual propellant', '%', 2]
   ];
 
   function grainCountTable(info, ctx) {
@@ -697,24 +755,28 @@ const Charts = (() => {
       const score = s1.score !== null && s1.score !== undefined ? s1.score.toFixed(3)
         : (s1.near !== null && s1.near !== undefined ? 'no legal design' : '—');
       return `<tr class="${cls}"><td class="n">${s.n}</td>
-        <td class="n">${(s.grain_length / 0.0254).toFixed(2)}″</td>
+        <td class="n">${App.fmtLen(s.grain_length)}</td>
         <td>${outcome}</td><td class="n">${score}</td>
         <td class="why">${why}</td><td class="n">${(s.simulations || 0).toLocaleString()}</td></tr>`;
     }).join('');
     return `<div style="overflow-x:auto"><table class="data-table">
-      <thead><tr><th class="n">grains</th><th class="n">each</th><th>outcome</th>
+      <thead><tr><th class="n">grains</th><th class="n">length</th><th>outcome</th>
       <th class="n">${multi ? 'hypervolume' : 'best score'}</th><th></th>
       <th class="n">sims</th></tr></thead><tbody>${rows}</tbody></table>
       <p class="sub">Score is after the first ${info.stage_generations} generations, on the
-      same axes for every count. The ${(info.stack_length / 0.0254).toFixed(2)}″ stack length
+      same axes for every count. The ${App.fmtLen(info.stack_length)} stack length
       was held throughout.</p></div>`;
   }
 
   function deltaTable(design, baseline) {
     if (!design) return '<p class="sub">Run the optimizer to compare.</p>';
-    const rows = SPEC_ROWS.map(([key, label, unit, dp]) => {
-      const a = baseline ? baseline[key] : null, b = design[key];
-      if (b === undefined || b === null) return '';
+    const rows = SPEC_ROWS.map(([key, label, fixedUnit, fixedDp]) => {
+      if (design[key] === undefined || design[key] === null) return '';
+      // A null unit means the row follows the chosen system.
+      const unit = fixedUnit === null ? metricUnit(key) : fixedUnit;
+      const dp = fixedDp === null ? App.metricDigits(key) : fixedDp;
+      const a = baseline && baseline[key] !== undefined ? metricValue(baseline, key) : null;
+      const b = metricValue(design, key);
       let delta = '';
       if (a) {
         const pct = (b / a - 1) * 100;
@@ -740,9 +802,7 @@ const Charts = (() => {
     const pct = Math.max(0, Math.min(ratio, 1.35)) * 100;
     const cls = ratio > 1.0005 ? 'over' : (ratio > 0.97 ? 'close' : '');
     const shown = metricValue(design, c.metric);
-    const limitShown = c.metric === 'max_pressure' || c.metric === 'avg_pressure'
-      ? limit / 6894.757293168361
-      : (c.metric === 'peak_mass_flux' ? limit / 703.0696 : limit);
+    const limitShown = App.metricToDisplay(c.metric, limit);
     const dp = limitShown < 10 ? 3 : 0;
     return `<div class="margin-row">
       <span class="label">${c.label || metricLabel(c.metric)}</span>
@@ -756,28 +816,49 @@ const Charts = (() => {
     const [ax, ay] = ctx.axes;
     const b = ctx.baseline;
     const counted = !!(ctx.grainCounts && ctx.grainCounts.free);
-    const rows = designs.map((d, i) => {
+    const U = App.units();
+    // Rows keep their original index so a click still selects the right design.
+    const sort = App.state.optionSort || { key: 'rank', dir: 1 };
+    const value = (d, key) => key === 'rank' ? d._rank : (d[key] === undefined ? null : +d[key]);
+    const order = designs.map((d, i) => Object.assign({}, d, { _i: i, _rank: i + 1 }));
+    order.sort((p, q) => {
+      const a = value(p, sort.key), c = value(q, sort.key);
+      if (a === null || c === null) return (a === null) - (c === null);
+      return (a - c) * sort.dir || p._rank - q._rank;
+    });
+    const rows = order.map(d => {
+      const i = d._i;
       const pct = v => b && b[v] ? ((d[v] / b[v] - 1) * 100) : null;
       const cell = v => {
         const p = pct(v);
         return p === null ? '<td class="n"></td>' :
           `<td class="n ${p >= 0 ? 'pos' : 'neg'}">${p >= 0 ? '+' : ''}${p.toFixed(2)}%</td>`;
       };
-      return `<tr class="clickable ${i === ctx.selected ? 'pick' : ''}" data-index="${i}">
+      const cls = (i === ctx.selected ? 'pick ' : '') + (i === ctx.compareIndex ? 'vs' : '');
+      return `<tr class="clickable ${cls}" data-index="${i}">
+        <td class="n">${d._rank}</td>
         <td>${d.designation || ('Option ' + (i + 1))}</td>
         ${counted ? `<td class="n">${d.n_grains || ''}</td>` : ''}
         <td class="n">${metricValue(d, ax).toFixed(0)}</td>${cell(ax)}
         <td class="n">${metricValue(d, ay).toFixed(0)}</td>${cell(ay)}
-        <td class="n">${d.max_pressure_psi.toFixed(0)}</td>
+        <td class="n">${metricValue(d, 'max_pressure').toFixed(U.pressure.dp)}</td>
         <td class="n">${d.peak_kn.toFixed(0)}</td>
-        <td class="n">${d.mass_flux_lb.toFixed(3)}</td>
-        <td><button class="chip" data-export="${i}">.ric</button></td></tr>`;
+        <td class="n">${metricValue(d, 'peak_mass_flux').toFixed(U.mass_flux.dp)}</td>
+        <td class="acts"><button class="chip" data-compare="${i}" title="Compare with the selected design">${i === ctx.compareIndex ? 'vs \u2713' : 'vs'}</button>
+        <button class="chip" data-export="${i}">.ric</button></td></tr>`;
     }).join('');
-    return `<div style="overflow-x:auto;max-height:340px"><table class="data-table">
-      <thead><tr><th>class</th>${counted ? '<th class="n">grains</th>' : ''}
-      <th class="n">${metricLabel(ax)}</th><th class="n">Δ</th>
-      <th class="n">${metricLabel(ay)}</th><th class="n">Δ</th>
-      <th class="n">psi</th><th class="n">Kn</th><th class="n">flux</th><th></th></tr></thead>
+    const th = (key, label) => {
+      const on = sort.key === key;
+      const mark = on ? (sort.dir > 0 ? ' \u25b4' : ' \u25be') : '';
+      return `<th class="n sortable ${on ? 'on' : ''}" data-sort="${key}"
+        title="Sort by ${label}">${label}${mark}</th>`;
+    };
+    return `<div style="overflow-x:auto;max-height:340px"><table class="data-table options">
+      <thead><tr>${th('rank', '#')}<th>class</th>${counted ? th('n_grains', 'grains') : ''}
+      ${th(ax, metricLabel(ax))}<th class="n">Δ</th>
+      ${th(ay, metricLabel(ay))}<th class="n">Δ</th>
+      ${th('max_pressure', U.pressure.label)}${th('peak_kn', 'Kn')}
+      ${th('peak_mass_flux', 'flux')}<th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   }
 
@@ -838,7 +919,7 @@ const Charts = (() => {
     const layout = fixTitles(Object.assign(theme(), {
       showlegend: true,
       margin: { l: 70, r: 18, t: 8, b: 52 },
-      uirevision: 'live',
+      uirevision: 'live-' + App.state.unit,
       dragmode: 'pan',
       xaxis: Object.assign(theme().xaxis, { title: axisTitle(ax) }),
       yaxis: Object.assign(theme().yaxis, { title: axisTitle(ay) })
@@ -868,30 +949,29 @@ const Charts = (() => {
 
   /* ------------------------------------------------- behaviour over time */
 
-  const PA_PSI = 6894.757293168361, KG_LB = 703.0696;
-
   //: One stacked row each, sharing the time axis. Every row names its own
   //: quantity and unit, and carries the limit that applies to it.
   const BEHAVIOUR = {
-    thrust: { title: 'Thrust (N)', colour: SERIES[0],
+    thrust: { title: () => 'Thrust (N)', colour: SERIES[0],
               series: c => c.thrust, limits: [] },
-    pressure: { title: 'Pressure (psi)', colour: SERIES[1],
-                series: c => c.pressure.map(v => v / PA_PSI),
+    pressure: { title: () => 'Pressure (' + U().pressure.label + ')', colour: SERIES[1],
+                series: c => c.pressure.map(v => v / U().pressure.scale),
                 limits: ['max_pressure', 'avg_pressure'],
-                scale: v => v / PA_PSI },
-    kn: { title: 'Kn', colour: SERIES[2],
+                scale: v => v / U().pressure.scale },
+    kn: { title: () => 'Kn', colour: SERIES[2],
           series: c => c.kn, limits: ['peak_kn'], scale: v => v },
-    mass_flux: { title: 'Mass flux (lb/in\u00b2s)', colour: LIMIT,
+    mass_flux: { title: () => 'Mass flux (' + U().mass_flux.label + ')', colour: LIMIT,
                  // Per grain in openMotor; the limit applies to the worst one.
                  series: c => worstFlux(c), limits: ['peak_mass_flux'],
-                 scale: v => v / KG_LB }
+                 scale: v => v / U().mass_flux.scale }
   };
 
   function worstFlux(c) {
     const grains = (c.mass_flux || []).filter(g => g && g.length);
     if (!grains.length) return [];
+    const scale = U().mass_flux.scale;
     return c.time.map((_, i) =>
-      Math.max.apply(null, grains.map(g => (g[i] || 0) / KG_LB)));
+      Math.max.apply(null, grains.map(g => (g[i] || 0) / scale)));
   }
 
   //: One axis, thrust, with the rest drawn against it. Each curve is scaled to
@@ -910,14 +990,15 @@ const Charts = (() => {
     const t = theme();
     const traces = rows.map(key => {
       const row = BEHAVIOUR[key], data = series[key];
+      const title = row.title();
       const top = peak(data);
       const scale = key === 'thrust' ? 1 : anchor / top;
-      const unit = row.title.replace(/^[^(]*\(?|\)$/g, '') || '';
+      const unit = title.replace(/^[^(]*\(?|\)$/g, '') || '';
       return {
         x: c.time, y: data.map(v => v * scale), customdata: data,
         mode: 'lines', line: { color: row.colour, width: 2 },
-        name: key === 'thrust' ? row.title
-          : row.title + '  \u2022  peak ' + fmtNum(top),
+        name: key === 'thrust' ? title
+          : title + '  \u2022  peak ' + fmtNum(top),
         hovertemplate: '%{customdata:,.4~r} ' + unit + '<extra></extra>'
       };
     });

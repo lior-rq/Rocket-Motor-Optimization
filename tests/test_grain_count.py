@@ -195,6 +195,15 @@ def test_merge_takes_the_front_across_counts():
     assert [d["label"] for d in merged] == ["Option 1", "Option 2"]
 
 
+def test_merge_drops_the_same_motor_found_twice():
+    objective = Objective(objectives=(ObjectiveSpec(metric="total_impulse"),),
+                          baselines={"total_impulse": 5000.0})
+    a = _stack(5)
+    twice = dict(_design(5, 1000, 5000), x=[0.02, 0.03, 0.01, 0.5])
+    a.designs = [twice, dict(twice), dict(_design(5, 900, 4000), x=[0.02, 0.03, 0.011, 0.5])]
+    assert len(_merge_designs([a], objective, n_obj=1)) == 2
+
+
 # --- the whole thing, small --------------------------------------------------
 
 
@@ -219,6 +228,14 @@ def test_run_searches_two_counts_and_reports_each(base):
     assert result.stats["searched"][0] == "n_grains"
     assert any(s.get("stage") == "stage1" for s in snaps)
     assert all("simulations_total" in s for s in snaps)
+    # Every generation names its best legal motor, so a run can hand it out
+    # before it finishes.
+    leaders = [s for s in snaps if s.get("leader")]
+    assert leaders
+    for s in leaders:
+        n = s["n_grains"]
+        assert len(s["leader"]["x"]) == build_space(spec, base, n).n_dim
+        assert s["leader"]["metric"] == result.stats["objective_labels"][0]
     for design in result.designs:
         assert design["n_grains"] in (5, 6)
         assert len(design["motor"]["grains"]) == design["n_grains"]

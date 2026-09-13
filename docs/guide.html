@@ -239,6 +239,16 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     </li>
 
     <li>
+      <span class="panel-name">Units</span>
+      <h3>Pick inch or mm once</h3>
+      <p>The toggle in the header switches the whole application between the two
+      systems: lengths in inches or millimetres, pressure in psi or MPa, mass flux in
+      lb/in²s or kg/m²s. Every field, chart, table and the report written for the run
+      follow it, and the step buttons offer shop sizes in the chosen unit. The choice is
+      remembered on this computer.</p>
+    </li>
+
+    <li>
       <span class="panel-name">Fixed hardware</span>
       <h3>Confirm the case</h3>
       <p>Grain outer diameter, length and count are read from the file and shown
@@ -270,6 +280,16 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     </li>
 
     <li>
+      <span class="panel-name">Bounds preview</span>
+      <h3>See the bounds as you type</h3>
+      <p>The stack drawn to scale, with the band a core may occupy shaded in each grain
+      and the loaded core as a dashed line. It redraws with every keystroke in the
+      table, as do the free-dimension count and the configuration size, so a bound is
+      seen rather than imagined. With the count free the cores share one row, since
+      there may be any number of them.</p>
+    </li>
+
+    <li>
       <span class="panel-name">Grain count</span>
       <h3>Let the search cut the stack</h3>
       <p>Off by default, so the file's count is used as it is. Ticked, the stack
@@ -281,7 +301,7 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       length is the one that packs the most impulse under a pressure or Kn limit.</p>
       <p>Every count is checked on paper first, and any that no core and throat can
       make legal is dropped. The rest each get a short search of ten generations; the
-      best two go on to the full search, along with any count within ten percent of
+      best two go on to the full search, along with any count within two percent of
       the leader. The results page lists every count and what became of it under
       <em>Optimizer Diagnostics</em>. The estimate on the settings page includes the
       short pass and the counts carried.</p>
@@ -309,7 +329,7 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     <li>
       <span class="panel-name">What to optimize</span>
       <h3>Choose the objectives</h3>
-      <p>Any of sixteen metrics, each set to maximise, minimise or reach a target value.
+      <p>Any of eighteen metrics, each set to maximise, minimise or reach a target value.
       Selecting two produces a trade-off curve rather than a single answer. Thrust and
       impulse oppose each other, so the useful question is usually which point on that
       curve to build.</p>
@@ -321,11 +341,16 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <span class="panel-name">Design Constraints</span>
       <h3>Set the envelope</h3>
       <p>Rows of <em>metric</em> ≤ or ≥ <em>value</em>. The defaults are peak chamber
-      pressure 500 psi, peak Kn 225, peak mass flux 1.05 lb/in&sup2;s and port/throat
-      ratio 1.4, which are amateur-practice numbers rather than the case rating a
+      pressure 500 psi, peak Kn 225, peak mass flux 1.05 lb/in&sup2;s, port/throat
+      ratio 1.4 and peak core Mach 1.0, which are amateur-practice numbers rather than the case rating a
       <code>.ric</code> file usually carries. Unticking a row ignores that limit, and
       <strong>+ add</strong> introduces further ones. Two limits on the same metric are
       flagged, since only the tighter one binds.</p>
+      <p>Some rows are offered switched off. <em>Residual propellant</em> is the share
+      of the load still unburned when the motor quits, because thrust fell under
+      openMotor&rsquo;s burnout threshold or the pressure fell out of the
+      propellant&rsquo;s burn-rate range: the sliver left when cores of different sizes
+      finish at different times. Tick it to cap that at a few percent.</p>
       <p>Below the table, the loaded motor is shown against every limit, both as a
       table and as its pressure, Kn and mass flux over time with the limits drawn on
       as dotted lines.</p>
@@ -392,6 +417,13 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       the machine slowing down as it heats up.</p>
     </li>
   </ol>
+  <div class="note">
+    <span class="lbl">Taking a motor before the run ends</span>
+    <p>The <em>Best so far</em> card on the waiting screen carries a download button
+    once a legal design exists. It hands out the highest-scoring motor of any
+    generation so far as a <code>.ric</code>, which for a single-objective run is
+    simply the best motor yet. The run continues.</p>
+  </div>
 </section>
 
 <hr class="rule">
@@ -414,24 +446,33 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <span class="tag">all of them</span>
       <h3>Trade-off Explorer</h3>
       <p>The curve of options, where any point can be clicked to load it into Design
-      Review. Also shows every design attempted, a parallel-coordinates view of what the
-      successful designs have in common, and a table with a <code>.ric</code> export
-      button on each row.</p>
+      Review and shift-clicked to compare it. Also shows every design attempted, a
+      parallel-coordinates view of what the successful designs have in common, and a
+      table with a <code>.ric</code> export button on each row. Any column heading in
+      the table sorts it; the first column restores the ranked order. Up to ninety
+      designs are kept, spread along the curve when the front is longer.</p>
     </div>
     <div class="card">
       <span class="tag">the search</span>
       <h3>Optimizer Diagnostics</h3>
-      <p>Progress against simulations spent and which limit is binding. In trade-off
-      mode it also reports model accuracy and which dimension has the greatest
-      influence.</p>
+      <p>Progress against simulations spent and which limit is binding. When the
+      grain count was searched, a table lists every count with its outcome. In
+      trade-off mode it also reports model accuracy and which dimension has the
+      greatest influence.</p>
     </div>
     <div class="card">
       <span class="tag">before and after</span>
       <h3>Compare &amp; Safety</h3>
       <p>The loaded motor against the selected design, a specification delta table,
-      mass flux in each grain against its limit, and a tornado chart of what most affects
-      the leading objective.</p>
+      mass flux and core Mach in each grain against their limits, and a tornado chart
+      of what most affects the leading objective.</p>
     </div>
+  </div>
+  <div class="note steel">
+    <span class="lbl">Comparing two designs</span>
+    <p>The <strong>vs</strong> button on a row, or a shift-click on a row or a point on
+    the curve, draws that design dashed over the selected one in every curve panel. A
+    strip above the panels names the pair and clears it.</p>
   </div>
   <div class="note">
     <span class="lbl">Identifying the binding limit</span>
@@ -457,14 +498,17 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
   the search came, and what would have to change.</p>
   <p><strong>Design sheets</strong> gives one PDF per design on the curve, with
       the dimensions to machine to, packaged as a zip archive.</p>
-      <p><strong>Motor files</strong> gives one RASP <code>.eng</code> per design in a
-      zip, the format OpenRocket and RockSim read. Each curve is a real openMotor run at
-      the verification timestep, so an <code>.eng</code> agrees with the figures this run
-      reported for the same design. One caveat matters: RASP has a single total-mass
-      field and this application never models hardware, so that field holds the
-      propellant mass alone, and the diameter and length are the grain outer diameter and
-      the grain stack. The case, nozzle and closures have to be added before the file is
-      used for an altitude simulation. Every file repeats this in its own header.</p>
+      <p><strong>All motors</strong> gives one RASP <code>.eng</code> holding every
+      design, the format OpenRocket and RockSim read; both list each motor in the file
+      separately. Each curve is a real openMotor run at the verification timestep, so
+      the <code>.eng</code> agrees with the figures this run reported for the same
+      design. One caveat matters: RASP has a single total-mass field and this
+      application never models hardware, so that field holds the propellant mass alone,
+      and the diameter and length are the grain outer diameter and the grain stack. The
+      case, nozzle and closures have to be added before the file is used for an altitude
+      simulation. The file repeats this in its header.</p>
+      <p><strong>openMotor files</strong> gives a zip of one <code>.ric</code> per
+      design, the same files the per-row export button produces.</p>
   </div>
 </section>
 

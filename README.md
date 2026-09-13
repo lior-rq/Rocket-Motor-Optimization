@@ -74,12 +74,17 @@ and never modified. Nine dimensions can be varied, plus the grain count:
 Each dimension takes a machining step, 0.05 in by default. The optimiser only returns
 values that fall on that grid. Bounds, objectives and limits are configured in the
 application. The limits start at peak chamber pressure 500 psi, peak Kn 225, peak mass
-flux 1.05 lb/in²s and port/throat ratio 1.4, which are amateur-practice numbers rather
-than the case rating a `.ric` file usually carries.
+flux 1.05 lb/in²s, port/throat ratio 1.4 and peak core Mach 1.0, which are
+amateur-practice numbers rather than the case rating a `.ric` file usually carries.
+openMotor only warns when a core goes supersonic, so the search holds that one itself.
 
-Sixteen metrics are available as objectives. Each can be maximised, minimised or
-driven toward a target value. Selecting two produces a trade-off curve rather than a
-single result.
+Eighteen metrics are available as objectives or limits. Each can be maximised,
+minimised or driven toward a target value. Selecting two produces a trade-off curve
+rather than a single result. Some limits are offered switched off, among them residual
+propellant: the share of the load still unburned when the motor quits, because thrust
+fell under openMotor's burnout threshold or the pressure fell out of the propellant's
+burn-rate range. It is the sliver left when cores of different sizes finish at
+different times.
 
 ## How results are produced
 
@@ -91,7 +96,12 @@ application because its answers come from a model rather than from the simulator
 
 Every design that appears in a result has been simulated in openMotor at the
 verification timestep with all search-time safety margins removed. Surrogate models
-influence which designs are proposed, never which are reported.
+influence which designs are proposed, never which are reported. Up to ninety designs
+are kept, spread along the trade-off curve when the front is longer than that.
+
+While a run is going, the best legal motor found so far can be downloaded as a `.ric`
+from the waiting screen. It is the highest-scoring design of any generation so far,
+which for a single-objective run is simply the best motor yet.
 
 The search runs at a 0.01 s timestep and verification at 0.002 s. The two disagree
 slightly and in different directions depending on the metric. Peak mass flux is a
@@ -139,7 +149,7 @@ that the count exists. Three passes keep that affordable:
 2. **Short search.** Every surviving count gets a search of ten generations at the
    preset's population. Counts are ranked on the hypervolume of their verified
    front, or on the best legal score for a single objective.
-3. **Full search.** The best two counts, plus any within ten percent of the leader,
+3. **Full search.** The best two counts, plus any within two percent of the leader,
    get the full preset budget, seeded with their short-search survivors. The
    reported designs are the non-dominated set across every count, compared on
    metrics alone.
@@ -172,13 +182,14 @@ designs. A run that finds no legal design is documented in the most detail, incl
 which limit could not be met and, where burning area is closed-form, a proof that no
 core diameter would have satisfied it.
 
-Two further downloads are available on request. The design sheets are one PDF per
-design on the trade-off curve, with the dimensions to machine to. The motor files are
-RASP `.eng`, one per design, which OpenRocket and RockSim read directly; each is a real
-openMotor run at the verification timestep, so it agrees with the report. The `.eng`
-format carries a single total-mass field and this application never models hardware, so
-that field holds the propellant mass alone and the casing has to be added before the
-file is used for an altitude simulation. Every file says so in its own header.
+Three further downloads are available on request. The design sheets are one PDF per
+design on the trade-off curve, with the dimensions to machine to. The motor file is one
+RASP `.eng` holding every design, which OpenRocket and RockSim read directly and list
+as separate motors; each curve is a real openMotor run at the verification timestep, so
+it agrees with the report. The `.eng` format carries a single total-mass field and this
+application never models hardware, so that field holds the propellant mass alone and
+the casing has to be added before the file is used for an altitude simulation. The file
+says so in its header. The openMotor files are a zip of one `.ric` per design.
 
 `outputs/` mirrors the most recent optimisation and nothing else. It is emptied and
 rewritten on every run, so its contents always describe the motor that was just

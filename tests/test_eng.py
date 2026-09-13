@@ -16,8 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from rocketopt.eng import (CURVE_POINTS, design_eng, eng_text, resample,
-                           build_eng_bundle)
+                           build_eng_file)
+from rocketopt.outputs import build_ric_bundle
 from rocketopt.ric import load_ric
+from rocketopt.runner import build_space, default_spec, describe_design
 from rocketopt.simulate import curves, simulate_motor
 from tests import sample_motor
 
@@ -30,6 +32,22 @@ def parse(text):
     head = lines[0].split()
     rows = [tuple(map(float, l.split())) for l in lines[1:]]
     return head, rows
+
+
+def parse_many(text):
+    """Every motor in a file, the way OpenRocket reads one: a comment line
+    ends the data of the motor before it."""
+    motors, block = [], []
+    for line in text.splitlines():
+        if line.startswith(";"):
+            if block:
+                motors.append(parse("\n".join(block)))
+                block = []
+        elif line.strip():
+            block.append(line)
+    if block:
+        motors.append(parse("\n".join(block)))
+    return motors
 
 
 def assert_valid(text):
@@ -116,4 +134,43 @@ def test_design_eng_returns_none_without_a_curve():
 
 def test_bundle_refuses_an_empty_front(tmp_path):
     with pytest.raises(ValueError):
-        build_eng_bundle([], None, load_ric(MOTOR), tmp_path / "out.zip")
+        build_eng_file([], None, load_ric(MOTOR), tmp_path / "out.eng")
+    with pytest.raises(ValueError):
+        build_ric_bundle([], None, tmp_path / "out.zip")
+
+
+def _two_designs():
+    base = load_ric(MOTOR)
+    spec = default_spec(base)
+    space = build_space(spec, base)
+    x = space.from_motor(base)
+    y = x.copy()
+    y[space.names.index("throat")] *= 1.1
+    y = space.canonical_one(y)
+    return base, space, [describe_design(space, x, spec, "Option 1"),
+                         describe_design(space, y, spec, "Option 2")]
+
+
+def test_one_eng_file_lists_every_motor(tmp_path):
+    base, space, designs = _two_designs()
+    path = build_eng_file(designs, space, base, tmp_path / "motors.eng", workers=1)
+    motors = parse_many(path.read_text())
+    assert len(motors) == 2
+    names = []
+    for head, rows in motors:
+        assert len(head) == 7
+        assert rows[-1][1] == 0.0 and rows[0][0] > 0
+        names.append(head[0])
+    assert names[0].endswith("-01") and names[1].endswith("-02")
+
+
+def test_ric_zip_holds_one_file_per_design(tmp_path):
+    base, space, designs = _two_designs()
+    path = build_ric_bundle(designs, space, tmp_path / "ric.zip")
+    with zipfile.ZipFile(path) as archive:
+        names = sorted(archive.namelist())
+        assert len(names) == 2 and all(n.endswith(".ric") for n in names)
+        archive.extractall(tmp_path)
+    again = load_ric(tmp_path / names[1])
+    assert again["nozzle"]["throat"] == pytest.approx(designs[1]["throat"])
+    assert designs[1]["throat"] != pytest.approx(designs[0]["throat"])

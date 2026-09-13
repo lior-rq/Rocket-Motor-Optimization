@@ -19,7 +19,8 @@ from .optimize import (Objective, direct_pareto, direct_search, pareto_indices,
 from .sampling import evaluate_batch, generate_mixed_dataset
 from .simulate import PA_PER_PSI, curves, simulate_motor
 from .ric import clone
-from .spec import OPTIMISABLE_METRICS, RunSpec, VariableSpec, core_specs
+from .spec import (MAX_DESIGNS, OPTIMISABLE_METRICS, RunSpec, VariableSpec,
+                   core_specs)
 from .surrogate import Surrogate
 from .units import KG_M2S_PER_LB_IN2S, M_PER_IN
 
@@ -78,12 +79,23 @@ def _snapshot(frame: pd.DataFrame, objective: Objective, space: DesignSpace,
         order = np.concatenate([keep, rest])[:TELEMETRY_POINTS]
 
     front: List[List[float]] = []
+    leader: Optional[Dict] = None
     if feasible.any():
         good = frame[feasible]
         picked = pareto_indices(-objective.matrix(good))
         pts = np.column_stack([good[metrics[1]].to_numpy(dtype=float)[picked],
                                good[metrics[0]].to_numpy(dtype=float)[picked]])
         front = pts[np.argsort(pts[:, 0])].tolist()
+        # The legal design scoring highest this generation, with its vector,
+        # so a run can hand out its best motor before it finishes. Never on
+        # the surrogate path: a prediction is not a motor.
+        if not surrogate and all(n in good.columns for n in space.names):
+            score = objective.score_frame(good)
+            top = good.iloc[int(np.argmax(score))]
+            leader = {"x": [float(top[n]) for n in space.names],
+                      "score": float(score.max()),
+                      "metric": metrics[0], "value": float(top[metrics[0]]),
+                      "values": {m: float(top[m]) for m in metrics}}
 
     return {
         "generation": int(generation),
@@ -104,6 +116,7 @@ def _snapshot(frame: pd.DataFrame, objective: Objective, space: DesignSpace,
         "surrogate": bool(surrogate),
         "best": [float(y[feasible].max()), float(x[feasible].max())]
                 if feasible.any() else None,
+        "leader": leader,
     }
 
 
@@ -297,6 +310,11 @@ def default_spec(base_motor: Dict) -> RunSpec:
                        label="Peak mass flux"),
         ConstraintSpec(metric="port_throat", op=">=", value=1.4,
                        label="Port/throat ratio"),
+        # Subsonic core flow. openMotor only warns, so the search holds it.
+        ConstraintSpec(metric="peak_mach", op="<=", value=1.0,
+                       label="Peak core Mach"),
+        ConstraintSpec(metric="residual_pct", op="<=", value=5.0, enabled=False,
+                       label="Residual propellant"),
         ConstraintSpec(metric="avg_pressure", op=">=", value=200 * PA_PER_PSI,
                        enabled=False, label="Mean chamber pressure"),
         ConstraintSpec(metric="total_impulse", op=">=", value=0.0, enabled=False,
@@ -922,13 +940,24 @@ def _search_stack(stack: _Stack, spec: RunSpec, budget: Dict, n_obj: int,
 
 
 def _merge_designs(stacks: List[_Stack], objective: Objective,
-                   n_obj: int, cap: int = 60) -> List[Dict]:
+                   n_obj: int, cap: int = MAX_DESIGNS) -> List[Dict]:
     """Every count's verified designs, as one ranked list.
 
     Compared on metrics alone, since the design vectors differ in length. The
     non-dominated set is taken again across counts.
     """
-    designs = [d for stack in stacks for d in stack.designs]
+    designs = []
+    seen = set()
+    for stack in stacks:
+        for d in stack.designs:
+            # Seeds converge on the same motor; one copy is enough.
+            x = d.get("x")
+            key = (stack.n, tuple(np.round(np.asarray(x, dtype=float), 6))) if x else None
+            if key is not None and key in seen:
+                continue
+            if key is not None:
+                seen.add(key)
+            designs.append(d)
     if not designs:
         return []
     frame = pd.DataFrame([{m: d.get(m) for m in OPTIMISABLE_METRICS} for d in designs])
@@ -1158,8 +1187,8 @@ def _rank_designs(space: DesignSpace, front: pd.DataFrame, spec: RunSpec,
     if not len(front):
         return []
     X = space.canonicalize(front[space.names].to_numpy(dtype=float))
-    if len(X) > 60:  # keep the front readable, spread across the trade-off
-        keep = np.linspace(0, len(X) - 1, 60).round().astype(int)
+    if len(X) > MAX_DESIGNS:  # keep the front readable, spread across it
+        keep = np.linspace(0, len(X) - 1, MAX_DESIGNS).round().astype(int)
         X = X[np.unique(keep)]
     verified = evaluate_batch(space, X, timestep=spec.verify_timestep,
                               workers=workers)
