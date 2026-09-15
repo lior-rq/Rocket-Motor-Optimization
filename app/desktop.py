@@ -213,14 +213,17 @@ def _run_smoke() -> int:
 
     port = _free_port()
     server, thread = _start_server(port)
-    if not _wait_until_started(server):
+    # A slow/cold CI runner, not just this machine: generous on purpose.
+    if not _wait_until_started(server, timeout=60):
         print("smoke: server did not start", file=sys.stderr)
         return 1
 
     base = "http://127.0.0.1:{}".format(port)
     try:
-        urllib.request.urlopen(base + "/", timeout=10).read()
-        urllib.request.urlopen(base + "/api/defaults", timeout=10).read()
+        urllib.request.urlopen(base + "/", timeout=30).read()
+        # A real simulation, not just a route -- first call pays for any
+        # lazy import still pending, so it gets the same generous budget.
+        urllib.request.urlopen(base + "/api/defaults", timeout=60).read()
     except Exception as exc:
         print("smoke: request failed: {}".format(exc), file=sys.stderr)
         return 1
