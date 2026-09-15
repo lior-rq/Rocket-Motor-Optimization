@@ -14,7 +14,8 @@ const App = (() => {
     spec: null, motor: null, metrics: {}, orderingModes: {}, effortLevels: {},
     unit: 'in', jobId: null, poll: null, results: null, runs: [],
     tolerances: null, toleranceFields: {}, robustness: null,
-    profile: 'design', selected: 0, baselineCurves: null, reportJob: null
+    profile: 'design', selected: 0, baselineCurves: null, reportJob: null,
+    desktop: false
   };
 
   /* ------------------------------------------------------------- numbers */
@@ -70,9 +71,39 @@ const App = (() => {
     node._t = setTimeout(() => { node.hidden = true; }, ms);
   }
 
+  //: Base64, for the desktop bridge -- JS objects crossing it are JSON, and
+  //: a Blob is not one.
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  //: A native Save dialog in the desktop build, a browser download otherwise.
+  async function saveBlob(blob, filename) {
+    if (state.desktop && window.pywebview?.api?.save_file) {
+      const b64 = await blobToBase64(blob);
+      const result = await window.pywebview.api.save_file(filename, b64);
+      if (result.error) { toast('Could not save: ' + result.error); return { ok: false }; }
+      if (result.cancelled) return { ok: false, cancelled: true };
+      return { ok: true, path: result.saved };
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    return { ok: true };
+  }
+
   /* ---------------------------------------------------------- bootstrap */
 
   async function boot() {
+    state.desktop = Boolean(window.pywebview);
     wireChrome();
     await loadDefaults();
     // A finished run can be reopened by its id, which makes a result something
@@ -560,13 +591,18 @@ const App = (() => {
       $('#btnRun').disabled = (data.problems || []).length > 0;
       renderSizing(data.sizing);
       const est = data.estimate || {};
-      $('#budgetSplit').innerHTML = est.seeds
-        ? `Split into <strong>${est.seeds}</strong> independent search${
-            est.seeds === 1 ? '' : 'es'} of ${est.pop} × ${est.gen} =
-           ${est.per_seed.toLocaleString()} simulations each, then merged into one
-           front. Independent searches disagree by several percent, so merging
-           several beats one long run at the same cost.`
-        : '';
+      $('#budgetSplit').innerHTML = !est.seeds ? ''
+        : est.rounds
+          // The surrogate path searches the model, not openMotor.
+          ? `A ${est.initial.toLocaleString()}-simulation sample, then
+             <strong>${est.rounds}</strong> round${est.rounds === 1 ? '' : 's'} of
+             ${est.seeds} search${est.seeds === 1 ? '' : 'es'} of ${est.pop} × ${est.gen}
+             against the model, each followed by ${est.infill} simulations it proposed.`
+          : `Split into <strong>${est.seeds}</strong> independent search${
+              est.seeds === 1 ? '' : 'es'} of ${est.pop} × ${est.gen} =
+             ${est.per_seed.toLocaleString()} simulations each, then merged into one
+             front. Independent searches disagree by several percent, so merging
+             several beats one long run at the same cost.`;
       if (!est.simulations) {
         $('#estimate').innerHTML = '';
       } else if (est.model_runs) {
@@ -802,8 +838,14 @@ const App = (() => {
     $('#btnBundle').disabled = !job.n_designs;
   }
 
-  function openReport() {
-    if (state.reportJob) window.open('/api/jobs/' + state.reportJob + '/report', '_blank');
+  async function openReport() {
+    if (!state.reportJob) return;
+    if (state.desktop && window.pywebview?.api?.open_report) {
+      const result = await window.pywebview.api.open_report(state.reportJob);
+      if (result.error) toast(result.error);
+      return;
+    }
+    window.open('/api/jobs/' + state.reportJob + '/report', '_blank');
   }
 
   async function downloadBundle() {
@@ -828,15 +870,12 @@ const App = (() => {
     // Ready, and the zip itself is the response rather than a status.
     if ((res.headers.get('Content-Type') || '').includes('zip')) {
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = (res.headers.get('Content-Disposition') || '')
+      const filename = (res.headers.get('Content-Disposition') || '')
         .replace(/.*filename="([^"]+)".*/, '$1') || 'design-sheets.zip';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      const result = await saveBlob(blob, filename);
       $('#bundleFill').style.width = '100%';
-      $('#bundleMsg').textContent = 'Downloaded.';
+      $('#bundleMsg').textContent = result.ok ? (state.desktop ? 'Saved.' : 'Downloaded.')
+        : (result.cancelled ? 'Cancelled.' : 'Could not save.');
       $('#btnBundle').disabled = false;
       return;
     }
@@ -980,13 +1019,9 @@ const App = (() => {
     });
     if (!res.ok) { toast('Export failed.'); return; }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'optimized_' + (design.designation || ('option' + (index + 1))) + '.ric';
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    toast('Saved .ric. Open it in openMotor.');
+    const filename = 'optimized_' + (design.designation || ('option' + (index + 1))) + '.ric';
+    const result = await saveBlob(blob, filename);
+    if (result.ok) toast('Saved .ric. Open it in openMotor.');
   }
 
   function renderEmptyPreview() {

@@ -71,6 +71,7 @@ class SimulationPool:
             1, (os.cpu_count() or 2) - 2
         )
         self._pool: Optional[ProcessPoolExecutor] = None
+        self._warm = False
 
     def __enter__(self) -> "SimulationPool":
         if self.workers > 1:
@@ -92,13 +93,16 @@ class SimulationPool:
 
     def evaluate(self, X: np.ndarray) -> pd.DataFrame:
         X = self.space.canonicalize(np.atleast_2d(np.asarray(X, dtype=float)))
-        if self._pool is None or len(X) < 2 * self.workers:
+        # A cold pool spawns its workers on first use, which a handful of
+        # designs is not worth. Once they exist, they win on any batch.
+        if self._pool is None or (not self._warm and len(X) < 2 * self.workers):
             rows: List[Dict] = [
                 _evaluate(self.space, x, self.timestep) for x in X
             ]
         else:
             chunk = max(1, len(X) // (self.workers * 4))
             rows = list(self._pool.map(_eval_worker, X, chunksize=chunk))
+            self._warm = True
         return pd.DataFrame(rows)
 
 
@@ -198,17 +202,5 @@ def mixed_designs(
     if n_structured:
         parts.append(structured_designs(space, n_structured, seed=seed + 1))
     return np.vstack(parts)
-
-
-def generate_mixed_dataset(
-    space: DesignSpace,
-    n: int,
-    timestep: float = 0.02,
-    seed: int = 0,
-    workers: Optional[int] = None,
-    structured_fraction: float = 0.35,
-) -> pd.DataFrame:
-    X = mixed_designs(space, n, seed=seed, structured_fraction=structured_fraction)
-    return evaluate_batch(space, X, timestep=timestep, workers=workers)
 
 

@@ -2,6 +2,10 @@
 # the scripts; none of it is source.
 outputs/
 
+# Only written by the desktop build's redirected stdout/stderr (see
+# app/desktop.py:_setup_logging), or when DATA_DIR happens to be the repo root.
+logs/
+
 # Reports are what *you* generate about *your* motor. The folder is committed so
 # the app has somewhere to write on a fresh clone; its contents never are.
 reports/*
@@ -19,7 +23,13 @@ vendor/
 app/static/vendor/
 
 .venv/
+.venv-desktop/
 __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+
+# PyInstaller's work and output directories.
+build/
+dist/
+*.spec.bak

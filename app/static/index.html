@@ -15,7 +15,9 @@
     <span class="mark" aria-hidden="true"></span>
     <span class="brand-text">
       <span class="title">Lior's Really Good™ Rocket Optimizer</span>
-      <span class="byline">Created by Lior Benshoshan</span>
+      <span class="byline">Created by Lior Benshoshan
+        <span class="version-chip" id="chipVersion" hidden></span>
+      </span>
     </span>
   </div>
 
@@ -33,6 +35,7 @@
       <button type="button" data-unit="mm">mm</button>
     </div>
     <a class="link legacy-link" href="/legacy" title="The single-page interface">legacy view</a>
+    <button type="button" class="ghost" id="btnFiles" title="Open the reports and motor folder" hidden>Files</button>
     <button type="button" class="ghost" id="btnTheme" title="Light / dark">◐</button>
     <button type="button" class="primary" id="btnRun">
       <span id="runLabel">Optimize</span>
@@ -306,9 +309,10 @@
           <label class="check">
             <input type="checkbox" id="modePareto">
             <span>Surrogate search <span class="beta">beta</span>
-              <em>Trains a model on sampled simulations and searches that instead of
-              openMotor. Faster and cheaper, and it maps the whole trade-off curve, but
-              the answers come from a model rather than the simulator.</em></span>
+              <em>Samples the space, then repeats: train a model on every simulation so
+              far, search the model, simulate what it proposes. The burns land where
+              the trade-off curve is, so the same budget maps it more fully. Every
+              design reported was simulated; the model only chooses what to try.</em></span>
           </label>
         </section>
         <div class="problems" id="problems"></div>

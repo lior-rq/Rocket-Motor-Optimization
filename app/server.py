@@ -29,14 +29,22 @@ from rocketopt.sizing import reduction_chain, size_space
 from rocketopt.tolerance import (TOLERANCE_FIELDS, ToleranceSpec,
                                  default_tolerances, propagate, summarise)
 from rocketopt.spec import (EFFORT_LEVELS, MAX_DESIGNS, OPTIMISABLE_METRICS,
-                            ORDERING_MODES, RunSpec)
+                            ORDERING_MODES, SURROGATE_GEN, SURROGATE_POP,
+                            RunSpec)
 from rocketopt.units import KG_M2S_PER_LB_IN2S
+from rocketopt import __version__ as VERSION
 
 
+from . import paths
 from .jobs import JobRegistry
 
-ROOT = Path(__file__).resolve().parents[1]
 STATIC = Path(__file__).resolve().parent / "static"
+
+#: Set by app.desktop before importing this module. Governs nothing here
+#: beyond what /api/about reports; the frontend decides what to do with it.
+DESKTOP = os.environ.get("ROCKETOPT_DESKTOP") == "1"
+
+paths.ensure_dirs()
 
 app = FastAPI(title="Lior's Really Good™ Rocket Optimizer")
 jobs = JobRegistry()
@@ -56,7 +64,7 @@ def _apply(motor: Dict) -> Dict:
 def _startup_motor() -> Optional[Path]:
     """Whatever .ric is in the motor folder. No file name is special."""
     try:
-        return motor_path(ROOT)
+        return motor_path(paths.DATA_DIR)
     except FileNotFoundError:
         return None
 
@@ -115,6 +123,18 @@ def motor_summary(motor: Dict) -> Dict:
 
 
 # --- routes ---
+
+
+@app.get("/api/about")
+def about() -> JSONResponse:
+    """What build this is, for the header chip and bug reports."""
+    return JSONResponse({
+        "version": VERSION,
+        "desktop": DESKTOP,
+        "data_dir": str(paths.DATA_DIR),
+        "platform": "mac" if sys.platform == "darwin"
+                    else ("windows" if os.name == "nt" else "linux"),
+    })
 
 
 @app.get("/api/defaults")
@@ -348,10 +368,10 @@ def apply_tighter_bounds(payload: ApplyBounds) -> JSONResponse:
 THROUGHPUT: Dict = {"rate": 45.0, "source": "assumed"}
 
 #: Surrogate evaluations per second. A model call, not a burn.
-SURROGATE_RATE = 12000.0
+SURROGATE_RATE = 4500.0
 
-#: Fitting the models and computing permutation importances, end to end.
-SURROGATE_OVERHEAD = 90.0
+#: Fitting the models every round, then scoring them at the end.
+SURROGATE_OVERHEAD = 30.0
 
 #: Everything that is not a simulation: pool startup, ranking, curve building.
 #: Roughly flat, so it dominates a short run.
@@ -469,12 +489,17 @@ def _estimate(spec: RunSpec) -> Dict:
     # Verification plus two sensitivity runs per free dimension.
     verified = MAX_DESIGNS + 2 * free
     predicted, overhead = 0, FIXED_OVERHEAD
+    pop, gen, rounds = budget["pop"], budget["gen"], None
 
     if spec.mode == "pareto":
-        # The budget buys predictions here, not burns. Charging them at the
-        # simulator's rate quoted an hour for a fifteen-minute run.
+        # The sample budget buys burns; the model searches are predictions.
+        # Charging those at the simulator's rate quoted an hour for a
+        # fifteen-minute run.
         searched = budget["samples"]
-        predicted = budget["total"]
+        predicted = budget["model_runs"]
+        pop, gen, rounds = SURROGATE_POP, SURROGATE_GEN, budget["rounds"]
+        # The simulated front and the layer behind it, at the fine timestep.
+        verified += 2 * MAX_DESIGNS
         overhead += SURROGATE_OVERHEAD
     else:
         searched = budget["total"]
@@ -510,8 +535,11 @@ def _estimate(spec: RunSpec) -> Dict:
             # nothing about time rather than quoting a number it invented.
             "measured": bool(diag),
             "preset_seconds": budget.get("preset_seconds"),
-            "seeds": budget["seeds"], "pop": budget["pop"], "gen": budget["gen"],
-            "per_seed": budget["per_seed"],
+            # Per search: burns in fast mode, model evaluations in surrogate
+            # mode, where the run is ``rounds`` of them after ``initial`` burns.
+            "seeds": budget["seeds"], "pop": pop, "gen": gen,
+            "per_seed": pop * gen, "rounds": rounds,
+            "initial": budget["initial"], "infill": budget["infill"],
             "openmotor_runs": int(real), "model_runs": int(predicted),
             "rate": round(_sim_rate(spec), 1),
             "rate_source": THROUGHPUT["source"],
@@ -588,8 +616,8 @@ def start_run(payload: SpecPayload) -> JSONResponse:
     job = jobs.start(spec, motor,
                      workers=spec.workers or machine_summary()["default_workers"],
                      predicted=_estimate(spec)["seconds"],
-                     shape=_shape(spec), reports_dir=ROOT / "reports",
-                     outputs_dir=ROOT / "outputs")
+                     shape=_shape(spec), reports_dir=paths.REPORTS_DIR,
+                     outputs_dir=paths.OUTPUTS_DIR)
     return JSONResponse(job.status_dict())
 
 
@@ -634,7 +662,7 @@ def start_bundle(job_id: str, kind: str = "sheets") -> JSONResponse:
             409, "That run found no legal designs, so there is nothing to write.")
     if kind not in ("sheets", "eng", "ric"):
         raise HTTPException(400, "Unknown download {!r}.".format(kind))
-    jobs.start_bundle(job, motor, ROOT / "reports", kind=kind,
+    jobs.start_bundle(job, motor, paths.REPORTS_DIR, kind=kind,
                       workers=machine_summary()["default_workers"])
     return JSONResponse(job.status_dict())
 

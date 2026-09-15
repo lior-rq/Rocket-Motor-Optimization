@@ -42,7 +42,7 @@ def main() -> None:
 
         for name in order_free:
             values = np.array([getattr(m, name) for _, m in runs])
-            spread = values.ptp() / max(abs(values.mean()), 1e-12)
+            spread = np.ptp(values) / max(abs(values.mean()), 1e-12)
             status = "ok" if spread < 1e-9 else "FAIL"
             if spread >= 1e-9:
                 failures += 1

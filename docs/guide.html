@@ -402,11 +402,15 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <p>The boxes behind the presets are read-only until <em>I know what I&rsquo;m
       doing</em> is ticked, which unlocks the budget, the search count and the core
       count.</p>
-      <p><em>Surrogate search</em> samples the space, trains models on those
-      simulations, and searches the models rather than openMotor. It is cheaper and
-      faster and it maps the whole trade-off curve, but its answers come from a model
-      and are not guaranteed to be the best available, which is why it is marked beta.
-      The full search runs every candidate through openMotor.</p>
+      <p><em>Surrogate search</em> spends half its budget on a space-filling sample,
+      then works in rounds: it trains models on every simulation so far, runs NSGA-II
+      against the models, and simulates the designs the models propose. Each round
+      puts the burns where the trade-off curve is, so the models are most accurate
+      exactly there. The curve is taken from simulated designs only and verified at
+      the fine timestep, as the full search does. It maps the whole curve on the same
+      budget the full search spends on one genetic run per seed; it is marked beta
+      because it has been measured on fewer configurations. The full search runs
+      every candidate through openMotor.</p>
       <p><strong>Cores to use</strong> sets how many simulations run at once. Automatic
       uses the machine&rsquo;s performance cores where the platform reports them, since
       the slowest worker sets the pace and adding efficiency cores makes a run longer

@@ -400,6 +400,8 @@ class DesignSpace:
                 "prop_volume",
                 "prop_mass",
                 "pressure_0",
+                "mass_flow_0",
+                "mass_flux_0",
             ]
             + (["throat_length", "throat_aspect"] if self.has_throat_length else [])
         )
@@ -409,6 +411,12 @@ class DesignSpace:
         Saint-Robert solve. Exact, so the surrogate never has to learn it."""
         return np.array(
             [self._propellant.getPressureFromKn(float(k)) for k in np.atleast_1d(kn_0)],
+            dtype=float,
+        )
+
+    def burn_rate(self, pressure) -> np.ndarray:
+        return np.array(
+            [self._propellant.getBurnRate(float(p)) for p in np.atleast_1d(pressure)],
             dtype=float,
         )
 
@@ -442,6 +450,15 @@ class DesignSpace:
         web = (diameter - cores) / 2.0
         prop_volume = (face_area * lengths).sum(axis=1)
 
+        # Mass flux at ignition, grain by grain as openMotor counts it: all
+        # the gas made forward of a grain's aft port, over that port. The
+        # simulated peak tracks the largest of these closely, and a tree
+        # model cannot build the cumulative sum on its own.
+        pressure_0 = self.initial_pressure(kn_0)
+        rate_0 = self.burn_rate(pressure_0) * self.propellant_density
+        mass_flow = np.cumsum((core_area + 2.0 * face_area) * rate_0[:, None], axis=1)
+        mass_flux_0 = (mass_flow / (math.pi * cores**2 / 4.0)).max(axis=1)
+
         return np.column_stack(
             [
                 cores,
@@ -458,7 +475,9 @@ class DesignSpace:
                 web.max(axis=1) - web.min(axis=1),
                 prop_volume,
                 prop_volume * self.propellant_density,
-                self.initial_pressure(kn_0),
+                pressure_0,
+                mass_flow[:, -1],
+                mass_flux_0,
             ]
             + ([X[:, self.slot["throat_length"]],
                 X[:, self.slot["throat_length"]] / throat]

@@ -253,6 +253,15 @@ TARGET_GENERATIONS = 50
 MIN_POPULATION = 40
 MAX_POPULATION = 240
 
+#: Surrogate search: the sample budget is spent half on a space-filling
+#: sample and half on rounds of designs the model proposes. Fewer rounds
+#: when the budget cannot fill them.
+SURROGATE_ROUNDS = 8
+#: NSGA-II against the model, per search. Predictions are cheap, so this is
+#: set for a well-resolved front rather than to a budget.
+SURROGATE_POP = 120
+SURROGATE_GEN = 100
+
 
 @dataclass
 class RunSpec:
@@ -306,9 +315,16 @@ class RunSpec:
         pop = int(min(max(per_seed // TARGET_GENERATIONS, MIN_POPULATION),
                       MAX_POPULATION))
         gen = max(int(per_seed // pop), 2)
+        # An explicit budget means the same in both modes: burns to spend.
+        samples = int(self.budget_simulations or preset["samples"])
+        rounds = max(1, min(SURROGATE_ROUNDS, samples // (2 * MIN_POPULATION)))
+        infill = max(1, samples // (2 * rounds))
         return {"pop": pop, "gen": gen, "seeds": seeds,
                 "per_seed": pop * gen, "total": pop * gen * seeds,
-                "samples": preset["samples"], "label": preset["label"],
+                "samples": samples, "label": preset["label"],
+                "initial": samples - infill * rounds,
+                "infill": infill, "rounds": rounds,
+                "model_runs": seeds * rounds * SURROGATE_POP * SURROGATE_GEN,
                 "preset_seconds": preset["seconds"]}
 
     def problems(self) -> List[Tuple[str, str]]:

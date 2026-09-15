@@ -8,7 +8,7 @@ them would only add error.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -19,6 +19,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from threadpoolctl import threadpool_limits
 
 #: Quantities the optimiser needs that are not available in closed form.
 TARGETS: List[str] = [
@@ -48,12 +49,26 @@ ANALYTIC = {
 }
 
 
+def needed_targets(objective) -> List[str]:
+    """The learned quantities a search actually reads: its objectives and its
+    limits. Fitting the rest each round would only slow the loop."""
+    wanted = ([s.metric for s in objective.objectives]
+              or ["initial_thrust", "total_impulse"])
+    wanted += ([c.metric for c in objective.constraints
+                if getattr(c, "enabled", True)]
+               or ["max_pressure", "peak_mass_flux", "peak_kn", "avg_pressure"])
+    return [t for t in TARGETS if t in set(wanted)]
+
+
 def build_model(kind: str = "gbt", seed: int = 0):
     if kind == "gbt":
+        # Small trees, many of them, no early stop: on a few thousand rows
+        # the validation set is too small to stop on, and the shallow
+        # ensemble scored best on the constraint metrics.
         return HistGradientBoostingRegressor(
-            max_iter=500, learning_rate=0.06, max_leaf_nodes=63,
-            min_samples_leaf=10, l2_regularization=1e-3,
-            early_stopping=True, validation_fraction=0.12, random_state=seed,
+            max_iter=400, learning_rate=0.06, max_leaf_nodes=15,
+            min_samples_leaf=5, l2_regularization=1e-3,
+            early_stopping=False, random_state=seed,
         )
     if kind == "rf":
         return RandomForestRegressor(
@@ -95,26 +110,39 @@ class Surrogate:
 
     # ------------------------------------------------------------- training
 
-    def fit(self, frame: pd.DataFrame, test_size: float = 0.2) -> List[TargetScore]:
+    def fit(self, frame: pd.DataFrame, test_size: float = 0.2,
+            targets: Optional[Iterable[str]] = None) -> List[TargetScore]:
         """Trains on successfully simulated designs, feasible or not.
 
         Infeasible ones are kept so the constraint boundary is visible from
         both sides. Failed simulations carry no targets and are dropped.
+        ``targets`` limits the fit to some of :data:`TARGETS`; others already
+        fitted are kept. A ``test_size`` of 0 fits on every row and scores
+        nothing.
         """
         usable = frame[frame["ok"]].reset_index(drop=True)
         X = usable[self.feature_names].to_numpy(dtype=float)
-        idx_train, idx_test = train_test_split(
-            np.arange(len(usable)), test_size=test_size, random_state=self.seed
-        )
-        self.scores = []
-        for target in TARGETS:
+        if test_size:
+            idx_train, idx_test = train_test_split(
+                np.arange(len(usable)), test_size=test_size, random_state=self.seed
+            )
+        else:
+            idx_train, idx_test = np.arange(len(usable)), np.arange(0)
+        targets = list(targets) if targets is not None else list(TARGETS)
+        self.scores = [s for s in self.scores if s.target not in targets]
+        for target in targets:
             y = usable[target].to_numpy(dtype=float)
             model = build_model(self.kind, self.seed)
-            model.fit(X[idx_train], y[idx_train])
-            pred = model.predict(X[idx_test])
+            # One thread: on a few thousand rows OpenMP spends more time
+            # synchronising than working, and the fit takes ten times longer.
+            with threadpool_limits(1):
+                model.fit(X[idx_train], y[idx_train])
+                self.models[target] = model
+                if not len(idx_test):
+                    continue
+                pred = model.predict(X[idx_test])
             actual = y[idx_test]
             denom = np.maximum(np.abs(actual), 1e-9)
-            self.models[target] = model
             self.scores.append(
                 TargetScore(
                     target=target,
@@ -130,9 +158,10 @@ class Surrogate:
     def predict(self, X_design: np.ndarray) -> pd.DataFrame:
         """Predicts every target for a batch of design vectors."""
         features = self.space.features(np.atleast_2d(X_design))
-        out = pd.DataFrame(
-            {target: model.predict(features) for target, model in self.models.items()}
-        )
+        with threadpool_limits(1):
+            out = pd.DataFrame(
+                {target: model.predict(features) for target, model in self.models.items()}
+            )
         frame = pd.DataFrame(features, columns=self.feature_names)
         for name, source in ANALYTIC.items():
             out[name] = frame[source].to_numpy()

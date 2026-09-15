@@ -18,7 +18,8 @@ const App = (() => {
     step: 0, reached: 0, validation: { problems: [] },
     ready: {}, diagnostic: null, diagRunning: false, bundleKind: 'sheets',
     battery: null, batteryHandle: null, wakeLock: null, presetSeconds: null,
-    liveRange: null, liveSnap: null, runStart: 0
+    liveRange: null, liveSnap: null, runStart: 0,
+    desktop: false, version: ''
   };
 
   /* ------------------------------------------------------------- numbers */
@@ -146,6 +147,7 @@ const App = (() => {
     wireChrome();
     readBattery();
     wireWizard();
+    await loadAbout();
     await loadDefaults();
     // A finished run can be reopened by its id, which makes a result something
     // a bookmarkable address for a run in progress on this machine.
@@ -156,6 +158,23 @@ const App = (() => {
     if (job) await attachToRun(job);
     if (step !== null) goTo(Number(step));
     else if (!job) goTo(0);
+  }
+
+  async function loadAbout() {
+    // window.pywebview is the tell: the desktop build sets it up before the
+    // page loads, a browser tab never has it. /api/about confirms the same
+    // thing server-side and carries the version this build actually is.
+    try {
+      const res = await fetch('/api/about');
+      const data = await res.json();
+      state.desktop = Boolean(window.pywebview) || Boolean(data.desktop);
+      state.version = data.version || '';
+    } catch (e) { return; } // an old server without this route; carry on
+    if (state.version) {
+      $('#chipVersion').textContent = 'v' + state.version;
+      $('#chipVersion').hidden = false;
+    }
+    $('#btnFiles').hidden = !state.desktop;
   }
 
   async function loadDefaults(payload) {
@@ -262,6 +281,7 @@ const App = (() => {
       Charts.fitAxes($('#livePlot'),
                      state.liveSnap ? fitRange(state.liveSnap) : state.liveRange));
     $('#btnReportOpen').addEventListener('click', openReport);
+    on('#btnFiles', 'click', () => window.pywebview?.api?.show_files());
     $('#btnBundle').addEventListener('click', () => downloadBundle('sheets'));
     on('#btnEng', 'click', () => downloadBundle('eng'));
     on('#btnRic', 'click', () => downloadBundle('ric'));
@@ -1364,10 +1384,16 @@ const App = (() => {
            <strong>${est.grain_counts}</strong> grain counts, then the full search on the
            best ${est.carried}.`
         : '';
-      $('#budgetSplit').innerHTML = est.seeds
-        ? `<strong>${est.seeds}</strong> search${est.seeds === 1 ? '' : 'es'} of
-           ${est.pop} × ${est.gen}, merged into one front.${counts}`
-        : '';
+      const plural = est.seeds === 1 ? '' : 'es';
+      const searches = `<strong>${est.seeds}</strong> search${plural} of ${est.pop} × ${est.gen}`;
+      $('#budgetSplit').innerHTML = !est.seeds ? ''
+        : est.rounds
+          // The surrogate path searches the model, not openMotor.
+          ? `A ${est.initial.toLocaleString()}-simulation sample, then
+             <strong>${est.rounds}</strong> round${est.rounds === 1 ? '' : 's'} of
+             ${searches} against the model, each followed by ${est.infill}
+             simulations it proposed.${counts}`
+          : `${searches}, merged into one front.${counts}`;
       // Predictions and burns cost wildly different amounts; quoting one
       // total made a surrogate run look an hour long when it takes minutes.
       const work = est.model_runs
@@ -1644,18 +1670,44 @@ const App = (() => {
       + `${grains} \u00b7 generation ${best.generation}`;
   }
 
+  //: Base64, for the desktop bridge -- JS objects crossing it are JSON, and
+  //: a Blob is not one.
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  //: A native Save dialog in the desktop build, a browser download otherwise.
+  //: Returns {ok, cancelled?, path?} rather than throwing, since a cancelled
+  //: save dialog is not a failure the caller needs to report.
+  async function saveBlob(blob, filename) {
+    if (state.desktop && window.pywebview?.api?.save_file) {
+      const b64 = await blobToBase64(blob);
+      const result = await window.pywebview.api.save_file(filename, b64);
+      if (result.error) { toast('Could not save: ' + result.error); return { ok: false }; }
+      if (result.cancelled) return { ok: false, cancelled: true };
+      return { ok: true, path: result.saved };
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    return { ok: true };
+  }
+
   async function downloadBest() {
     if (!state.jobId || !state.best) return;
     const res = await fetch('/api/jobs/' + state.jobId + '/best.ric');
     if (!res.ok) { toast('No legal design yet.'); return; }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'best-so-far.ric';
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    toast('Saved the best motor so far. Open it in openMotor.');
+    const result = await saveBlob(blob, 'best-so-far.ric');
+    if (result.ok) toast('Saved the best motor so far. Open it in openMotor.');
   }
 
   //: Everything drawn, plus a tenth of the span so nothing sits on the frame.
@@ -1734,8 +1786,14 @@ const App = (() => {
     bundleButtons(!job.n_designs);
   }
 
-  function openReport() {
-    if (state.reportJob) window.open('/api/jobs/' + state.reportJob + '/report', '_blank');
+  async function openReport() {
+    if (!state.reportJob) return;
+    if (state.desktop && window.pywebview?.api?.open_report) {
+      const result = await window.pywebview.api.open_report(state.reportJob);
+      if (result.error) toast(result.error);
+      return;
+    }
+    window.open('/api/jobs/' + state.reportJob + '/report', '_blank');
   }
 
   //: The downloads share one progress bar, so only one runs at a time.
@@ -1775,15 +1833,12 @@ const App = (() => {
     const disposition = res.headers.get('Content-Disposition') || '';
     if (disposition.startsWith('attachment')) {
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = disposition.replace(/.*filename="([^"]+)".*/, '$1')
+      const filename = disposition.replace(/.*filename="([^"]+)".*/, '$1')
         || BUNDLE_NAMES[state.bundleKind] || 'download';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      const result = await saveBlob(blob, filename);
       $('#bundleFill').style.width = '100%';
-      $('#bundleMsg').textContent = 'Downloaded.';
+      $('#bundleMsg').textContent = result.ok ? (state.desktop ? 'Saved.' : 'Downloaded.')
+        : (result.cancelled ? 'Cancelled.' : 'Could not save.');
       bundleButtons(false);
       return;
     }
@@ -2032,13 +2087,9 @@ const App = (() => {
     });
     if (!res.ok) { toast('Export failed.'); return; }
     const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'optimized_' + (design.designation || ('option' + (index + 1))) + '.ric';
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-    toast('Saved .ric. Open it in openMotor.');
+    const filename = 'optimized_' + (design.designation || ('option' + (index + 1))) + '.ric';
+    const result = await saveBlob(blob, filename);
+    if (result.ok) toast('Saved .ric. Open it in openMotor.');
   }
 
   function renderEmptyPreview() {

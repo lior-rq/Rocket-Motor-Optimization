@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from dataclasses import fields as dataclass_fields
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -15,13 +16,13 @@ import pandas as pd
 
 from .design import DesignSpace, SpaceConfig
 from .optimize import (Objective, direct_pareto, direct_search, pareto_indices,
-                       scale_constraints)
-from .sampling import evaluate_batch, generate_mixed_dataset
-from .simulate import PA_PER_PSI, curves, simulate_motor
+                       scale_constraints, surrogate_candidates)
+from .sampling import SimulationPool, evaluate_batch, mixed_designs
+from .simulate import PA_PER_PSI, Metrics, curves, simulate_motor
 from .ric import clone
-from .spec import (MAX_DESIGNS, OPTIMISABLE_METRICS, RunSpec, VariableSpec,
-                   core_specs)
-from .surrogate import Surrogate
+from .spec import (MAX_DESIGNS, OPTIMISABLE_METRICS, SURROGATE_GEN,
+                   SURROGATE_POP, RunSpec, VariableSpec, core_specs)
+from .surrogate import Surrogate, needed_targets
 from .units import KG_M2S_PER_LB_IN2S, M_PER_IN
 
 ProgressFn = Callable[[str, float, str], None]
@@ -411,11 +412,17 @@ class RunResult:
 
 
 def describe_design(space: DesignSpace, x: np.ndarray, spec: RunSpec,
-                    label: str, with_curves: bool = False) -> Dict:
-    """One design, simulated at the verification timestep."""
+                    label: str, with_curves: bool = False,
+                    metrics=None) -> Dict:
+    """One design, simulated at the verification timestep.
+
+    ``metrics`` MUST come from that same timestep when supplied; it saves
+    re-running a burn the ranking already did.
+    """
     x = space.canonical_one(np.asarray(x, dtype=float))
     motor = space.to_motor(x)
-    metrics = simulate_motor(motor, timestep=spec.verify_timestep)
+    if metrics is None:
+        metrics = simulate_motor(motor, timestep=spec.verify_timestep)
     row = metrics.as_row()
     row.update({
         "label": label,
@@ -552,6 +559,8 @@ class _Stack:
     stage1: Optional[Dict] = None
     carried: bool = False
     front: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: The front's rows already hold fine-timestep metrics.
+    verified: bool = False
     history: pd.DataFrame = field(default_factory=pd.DataFrame)
     designs: List[Dict] = field(default_factory=list)
     per_seed: List[Dict] = field(default_factory=list)
@@ -671,7 +680,8 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
     on_progress("verify", 0.90, "Re-simulating the winners at full fidelity")
     for stack in carried:
         stack.designs = _rank_designs(stack.space, stack.front, spec,
-                                      verify_objective, stack.history, workers)
+                                      verify_objective, stack.history, workers,
+                                      verified=stack.verified)
     result.designs = _merge_designs(carried, verify_objective, n_obj)
     if not result.designs:
         result.messages.append(
@@ -871,11 +881,7 @@ def _hypervolumes(stacks: List[_Stack]) -> None:
             fronts[stack.n] = stack.objective.matrix(front)
     if not fronts:
         return
-    stacked = np.vstack(list(fronts.values()))
-    worst = stacked.max(axis=0)
-    best = stacked.min(axis=0)
-    ref = worst + 0.05 * np.maximum(worst - best, 1e-9)
-    indicator = HV(ref_point=ref)
+    indicator = HV(ref_point=_hv_reference(np.vstack(list(fronts.values()))))
     for stack in stacks:
         F = fronts.get(stack.n)
         if F is None:
@@ -922,8 +928,10 @@ def _search_stack(stack: _Stack, spec: RunSpec, budget: Dict, n_obj: int,
     if spec.mode == "pareto":
         out = _surrogate_search(stack.space, stack.objective, spec, budget,
                                 stack.seeds, workers, on_progress, on_telemetry,
-                                meter, window, stack.n if several else None)
+                                meter, window, stack.n if several else None,
+                                known=stack.history)
         stack.surrogate = out.get("surrogate")
+        stack.verified = True
     else:
         out = _multi_seed_search(stack.space, stack.objective, spec, budget,
                                  stack.seeds, n_obj, workers, on_progress,
@@ -939,6 +947,24 @@ def _search_stack(stack: _Stack, spec: RunSpec, budget: Dict, n_obj: int,
                          if len(stack.history) else history)
 
 
+def _design_key(x: np.ndarray):
+    """The rounded vector, so every stage agrees on what a repeat is."""
+    return tuple(np.round(np.asarray(x, dtype=float), 6))
+
+
+def _legal(frame: pd.DataFrame, objective: Objective,
+           space: DesignSpace) -> np.ndarray:
+    """Rows that simulated and clear every limit of ``objective``."""
+    violation = scale_constraints(frame, objective, space).max(axis=1)
+    return frame["ok"].to_numpy(dtype=bool) & (violation <= 0)
+
+
+def _hv_reference(F: np.ndarray) -> np.ndarray:
+    """A reference point just past the worst value any row reaches."""
+    worst, best = F.max(axis=0), F.min(axis=0)
+    return worst + 0.05 * np.maximum(worst - best, 1e-9)
+
+
 def _merge_designs(stacks: List[_Stack], objective: Objective,
                    n_obj: int, cap: int = MAX_DESIGNS) -> List[Dict]:
     """Every count's verified designs, as one ranked list.
@@ -952,7 +978,7 @@ def _merge_designs(stacks: List[_Stack], objective: Objective,
         for d in stack.designs:
             # Seeds converge on the same motor; one copy is enough.
             x = d.get("x")
-            key = (stack.n, tuple(np.round(np.asarray(x, dtype=float), 6))) if x else None
+            key = (stack.n, _design_key(x)) if x else None
             if key is not None and key in seen:
                 continue
             if key is not None:
@@ -983,82 +1009,233 @@ def _merge_designs(stacks: List[_Stack], objective: Objective,
 def _surrogate_search(space: DesignSpace, objective: Objective, spec: RunSpec,
                       budget: Dict, seeds: np.ndarray, workers, on_progress,
                       on_telemetry: TelemetryFn, meter: _Meter, window,
-                      n_grains: Optional[int] = None) -> Dict:
-    """Sample, train, search the model, verify: the trade-off path."""
-    from .optimize import surrogate_pareto
+                      n_grains: Optional[int] = None,
+                      known: Optional[pd.DataFrame] = None) -> Dict:
+    """Sample once, then rounds of: fit, search the model, simulate its picks.
 
+    A model fitted to a space-filling sample is least accurate at the
+    constraint boundary, which is where the front sits. Simulating what the
+    model proposes each round puts the data there, so by the last round the
+    model is accurate where the answer is. The front is taken from simulated
+    designs only, verified at the fine timestep as the full search does.
+
+    ``known`` holds burns already made in this space at the search timestep.
+    They train the model and may reach the front, but are never re-simulated
+    and are not counted in the returned history.
+    """
     lo, hi = window
     span = hi - lo
     at = lambda f: lo + span * f  # noqa: E731
     tag = " ({} grains)".format(n_grains) if n_grains else ""
+    n_seeds = max(1, int(budget.get("seeds", 1)))
+    rounds = int(budget["rounds"])
+    labels = objective.objective_labels
+    targets = needed_targets(objective)
+    baseline_x = np.atleast_2d(seeds)[0]
+    sim_seconds = 0.0
+    known = known if known is not None and len(known) else pd.DataFrame()
+    n_known = int(len(known))
+    seen: set = set()
 
-    on_progress("sampling", at(0.0), "Sampling the design space" + tag)
-    sampling_started = time.time()
-    dataset = generate_mixed_dataset(space, budget["samples"],
-                                     timestep=spec.search_timestep,
-                                     seed=spec.seed, workers=workers)
-    sim_seconds = time.time() - sampling_started
-    meter.done += int(len(dataset))
-    on_progress("training", at(0.45), "Training surrogate models" + tag)
-    surrogate = Surrogate(space, kind="gbt", seed=spec.seed)
+    with SimulationPool(space, timestep=spec.search_timestep, workers=workers) as pool:
+        on_progress("sampling", at(0.0), "Sampling the design space" + tag)
+        started = time.time()
+        sample = pool.evaluate(mixed_designs(space, budget["initial"], seed=spec.seed))
+        sim_seconds += time.time() - started
+        meter.done += int(len(sample))
+        dataset = pd.concat([known, sample], ignore_index=True) if n_known else sample
+        seen.update(_design_key(x) for x in dataset[space.names].to_numpy(dtype=float))
+
+        surrogate = Surrogate(space, kind="gbt", seed=spec.seed)
+        per_round: List[Dict] = []
+        stale, front_F = 0, None
+        for r in range(rounds):
+            on_progress("training", at(0.30 + 0.60 * r / rounds),
+                        "Round {} of {}{}: training the model".format(r + 1, rounds, tag))
+            # Every burn teaches the model; scoring waits for the final fit.
+            surrogate.fit(dataset, targets=targets, test_size=0.0)
+            starts = np.vstack([np.atleast_2d(seeds),
+                                _seed_designs(dataset, space, objective, baseline_x)])
+            proposed = []
+            for index in range(n_seeds):
+                def tick(algorithm, index=index, r=r):
+                    """Same live view as the simulator path, over predictions."""
+                    done = getattr(algorithm, "n_gen", 0) or 0
+                    within = min(done / max(SURROGATE_GEN, 1), 1.0)
+                    on_progress("search", at(0.30 + 0.60 * (r + 0.2 + 0.5 * (index + within)
+                                                             / n_seeds) / rounds),
+                                "Round {} of {}{}: searching the model, {} of {}".format(
+                                    r + 1, rounds, tag, index + 1, n_seeds))
+                    frame = getattr(getattr(algorithm, "problem", None),
+                                    "last_frame", None)
+                    snap = _snapshot(frame, objective, space, labels, done, index,
+                                     n_seeds, surrogate=True)
+                    if snap is not None:
+                        snap["total_generations"] = int(SURROGATE_GEN)
+                        snap["stage"] = "search"
+                        if n_grains:
+                            snap["n_grains"] = int(n_grains)
+                        meter.stamp(snap, 0)
+                        on_telemetry(snap)
+
+                proposed.append(surrogate_candidates(
+                    space, surrogate, objective, pop_size=SURROGATE_POP,
+                    n_gen=SURROGATE_GEN, seed=int(spec.seed) + 1009 * index + 31 * r,
+                    seed_designs=starts, callback=tick))
+            X = _infill(space, surrogate, objective, proposed, seen, int(budget["infill"]))
+            if not len(X):
+                break
+            on_progress("infill", at(0.30 + 0.60 * (r + 0.7) / rounds),
+                        "Round {} of {}{}: simulating {} designs the model proposed"
+                        .format(r + 1, rounds, tag, len(X)))
+            started = time.time()
+            batch = pool.evaluate(X)
+            sim_seconds += time.time() - started
+            meter.done += int(len(batch))
+            seen.update(_design_key(x) for x in X)
+            dataset = pd.concat([dataset, batch], ignore_index=True)
+            # The live view gets real motors, so the best-so-far download works.
+            snap = _snapshot(batch, objective, space, labels, r + 1, 0, 1)
+            if snap is not None:
+                snap.update(total_generations=rounds, stage="infill")
+                if n_grains:
+                    snap["n_grains"] = int(n_grains)
+                meter.stamp(snap, 0)
+                on_telemetry(snap)
+            hv, before, front_F = _front_hypervolume(dataset, objective, space, front_F)
+            per_round.append({"round": r + 1, "simulated": int(len(batch)),
+                              "legal": int(_legal(batch, objective, space).sum()),
+                              "hypervolume": hv})
+            # Three rounds without the front moving and the model has run out
+            # of things to teach it; the rest of the budget would be wasted.
+            # Rounds with no front yet do not count: those are the rounds
+            # the infill exists for.
+            if hv is None:
+                continue
+            if before is None or hv > before + abs(before) * 1e-3:
+                stale = 0
+            else:
+                stale += 1
+            if stale >= 3:
+                break
+
+    on_progress("training", at(0.92), "Scoring the model" + tag)
     scores = surrogate.fit(dataset)
     surrogate_info = {
         "kind": surrogate.kind,
         "scores": [s.as_row() for s in scores],
         "importances": surrogate.importances(
-            dataset, objective.objective_labels[0]).head(12).to_dict("records"),
+            dataset, labels[0]).head(12).to_dict("records"),
         "parity": _parity_sample(surrogate, dataset, space),
         "n_grains": n_grains,
+        "rounds": per_round,
     }
-    baseline_x = seeds[0]
-    starts = np.vstack([np.atleast_2d(seeds),
-                        _seed_designs(dataset, space, objective, baseline_x)])
-    n_seeds = max(1, int(budget.get("seeds", 1)))
-    # The surrogate is trained once; searching it again is nearly free.
-    fronts = []
-    labels = objective.objective_labels
-    for index in range(n_seeds):
-        on_progress("search", at(0.55 + 0.40 * index / n_seeds),
-                    "Mapping the trade-off{}: search {} of {}".format(
-                        tag, index + 1, n_seeds))
+    on_progress("verify", at(0.95), "Verifying the front" + tag)
+    front = _simulated_front(space, dataset, objective, spec, workers)
+    return {"front": front, "history": dataset.iloc[n_known:].reset_index(drop=True),
+            "surrogate": surrogate_info, "sim_seconds": sim_seconds,
+            "per_seed": per_round}
 
-        def tick(algorithm, index=index):
-            """Same live view as the simulator path, over predictions."""
-            done = getattr(algorithm, "n_gen", 0) or 0
-            within = min(done / max(budget["gen"], 1), 1.0)
-            on_progress("search", at(0.55 + 0.40 * (index + within) / n_seeds),
-                        "Mapping the trade-off{}: search {} of {}, "
-                        "generation {} of {}".format(
-                            tag, index + 1, n_seeds,
-                            min(int(done), budget["gen"]), budget["gen"]))
-            frame = getattr(getattr(algorithm, "problem", None),
-                            "last_frame", None)
-            snap = _snapshot(frame, objective, space, labels, done, index,
-                             n_seeds, surrogate=True)
-            if snap is not None:
-                snap["total_generations"] = int(budget["gen"])
-                snap["stage"] = "search"
-                if n_grains:
-                    snap["n_grains"] = int(n_grains)
-                meter.stamp(snap, 0)
-                on_telemetry(snap)
 
-        out = surrogate_pareto(
-            space, surrogate, objective, pop_size=budget["pop"],
-            n_gen=budget["gen"], timestep=spec.verify_timestep,
-            workers=workers, seed=int(spec.seed) + 1009 * index,
-            seed_designs=starts, reference=dataset, callback=tick)
-        found = out.get("front", pd.DataFrame())
-        if len(found):
-            fronts.append(found)
-    front = pd.concat(fronts, ignore_index=True) if fronts else pd.DataFrame()
-    if len(front) and len(labels) > 1:
-        front = front.iloc[pareto_indices(-objective.matrix(front))]
-        front = front.reset_index(drop=True)
-    return {"front": front, "history": dataset, "surrogate": surrogate_info,
-            "sim_seconds": sim_seconds,
-            "per_seed": [{"seed": int(spec.seed) + 1009 * i, "designs": int(len(f))}
-                         for i, f in enumerate(fronts)]}
+def _infill(space: DesignSpace, surrogate: Surrogate, objective: Objective,
+            proposed: List[Dict], seen: set, count: int) -> np.ndarray:
+    """Which of the model's proposals to simulate this round.
+
+    Every search's predicted front first, spread evenly along it when there
+    are more than fit, then the closing populations. Designs already
+    simulated are skipped: the grid makes repeats common.
+    """
+    taken: set = set()
+
+    def fresh(X: np.ndarray) -> np.ndarray:
+        picked = []
+        for x in np.atleast_2d(X):
+            k = _design_key(x)
+            if k in seen or k in taken:
+                continue
+            taken.add(k)
+            picked.append(x)
+        return np.array(picked, dtype=float).reshape(-1, space.n_dim)
+
+    front = fresh(np.vstack([p["front"] for p in proposed]))
+    if len(front) > count:
+        pred = surrogate.predict(front)
+        order = np.argsort(-pred[objective.objective_labels[0]].to_numpy(dtype=float))
+        pick = order[np.linspace(0, len(order) - 1, count).round().astype(int)]
+        return front[np.unique(pick)]
+    rest = fresh(np.vstack([p["population"] for p in proposed]))
+    room = count - len(front)
+    if len(rest) > room:
+        pred = surrogate.predict(rest)
+        pred["ok"] = True
+        # Nearest to legal first; among the legal, best predicted score.
+        over = np.maximum(scale_constraints(pred, objective, space).max(axis=1), 0.0)
+        rank = over * 1e3 - objective.score_frame(pred)
+        rest = rest[np.argsort(rank)[:room]]
+    return np.vstack([front, rest])
+
+
+def _front_hypervolume(dataset: pd.DataFrame, objective: Objective,
+                       space: DesignSpace,
+                       previous: Optional[np.ndarray] = None):
+    """Hypervolume of the legal, simulated front, as ``(now, before, F)``.
+
+    The reference sits past the worst legal design simulated so far, so a
+    front that grows outward still counts. ``previous`` is the last front's
+    ``F``, measured against this round's reference, so ``now - before`` is
+    the growth. Without a legal design ``now`` is None and ``F`` is
+    ``previous``.
+    """
+    from pymoo.indicators.hv import HV
+
+    good = dataset[_legal(dataset, objective, space)]
+    if not len(good):
+        return None, None, previous
+    every = objective.matrix(good)
+    F = every[pareto_indices(-every)]
+    if F.shape[1] < 2:
+        before = float(-previous.min()) if previous is not None else None
+        return float(-F.min()), before, F
+    seen = every if previous is None else np.vstack([every, previous])
+    indicator = HV(ref_point=_hv_reference(seen))
+    before = float(indicator(previous)) if previous is not None else None
+    return float(indicator(F)), before, F
+
+
+def _simulated_front(space: DesignSpace, dataset: pd.DataFrame,
+                     objective: Objective, spec: RunSpec,
+                     workers: Optional[int]) -> pd.DataFrame:
+    """The front of everything simulated, re-run at the fine timestep.
+
+    The next layer behind the front comes too: a point that fails the fine
+    check leaves a hole, and the design behind it is the one to fill it.
+    The rows returned carry the fine-timestep metrics.
+    """
+    good = dataset[_legal(dataset, objective, space)]
+    if not len(good):
+        return pd.DataFrame()
+    layers = []
+    remaining = good.reset_index(drop=True)
+    for _ in range(2):
+        if not len(remaining):
+            break
+        picked = pareto_indices(-objective.matrix(remaining))
+        layers.append(remaining.iloc[picked])
+        remaining = remaining.drop(remaining.index[picked]).reset_index(drop=True)
+    candidates = pd.concat(layers, ignore_index=True).drop_duplicates(space.names)
+    candidates = candidates.sort_values(objective.objective_labels[0], ascending=False)
+    if len(candidates) > 2 * MAX_DESIGNS:  # thin evenly along the front
+        pick = np.linspace(0, len(candidates) - 1, 2 * MAX_DESIGNS).round().astype(int)
+        candidates = candidates.iloc[np.unique(pick)]
+    X = space.canonicalize(candidates[space.names].to_numpy(dtype=float))
+    verified = evaluate_batch(space, X, timestep=spec.verify_timestep,
+                              workers=workers)
+    keep = verified[_legal(verified, objective.strict(), space)].reset_index(drop=True)
+    if not len(keep):
+        return pd.DataFrame()
+    front = keep.iloc[pareto_indices(-objective.matrix(keep))]
+    return front.sort_values(objective.objective_labels[0],
+                             ascending=False).reset_index(drop=True)
 
 
 def _alternatives(space: DesignSpace, history: pd.DataFrame,
@@ -1076,10 +1253,10 @@ def _alternatives(space: DesignSpace, history: pd.DataFrame,
         if len(good):
             ranked = good.assign(_score=objective.score_frame(good)).sort_values(
                 "_score", ascending=False)
-            seen = {tuple(np.round(best_x, 5))}
+            seen = {_design_key(best_x)}
             picked = []
             for _, row in ranked.iterrows():
-                key = tuple(np.round(row[columns].to_numpy(dtype=float), 5))
+                key = _design_key(row[columns].to_numpy(dtype=float))
                 if key in seen:
                     continue
                 seen.add(key)
@@ -1182,18 +1359,25 @@ def _seed_designs(dataset: pd.DataFrame, space: DesignSpace,
 
 def _rank_designs(space: DesignSpace, front: pd.DataFrame, spec: RunSpec,
                   objective: Objective, history: pd.DataFrame,
-                  workers: Optional[int] = None) -> List[Dict]:
-    """Verifies each candidate and keeps only those that clear every limit."""
+                  workers: Optional[int] = None,
+                  verified: bool = False) -> List[Dict]:
+    """Verifies each candidate and keeps only those that clear every limit.
+
+    ``verified`` says the rows already hold fine-timestep metrics, so the
+    burns are not repeated.
+    """
     if not len(front):
         return []
-    X = space.canonicalize(front[space.names].to_numpy(dtype=float))
-    if len(X) > MAX_DESIGNS:  # keep the front readable, spread across it
-        keep = np.linspace(0, len(X) - 1, MAX_DESIGNS).round().astype(int)
-        X = X[np.unique(keep)]
-    verified = evaluate_batch(space, X, timestep=spec.verify_timestep,
-                              workers=workers)
-    violation = scale_constraints(verified, objective.strict(), space).max(axis=1)
-    good = verified[verified["ok"].to_numpy(dtype=bool) & (violation <= 0)]
+    if len(front) > MAX_DESIGNS:  # keep the front readable, spread across it
+        keep = np.linspace(0, len(front) - 1, MAX_DESIGNS).round().astype(int)
+        front = front.iloc[np.unique(keep)]
+    if verified:
+        checked = front.reset_index(drop=True)
+    else:
+        X = space.canonicalize(front[space.names].to_numpy(dtype=float))
+        checked = evaluate_batch(space, X, timestep=spec.verify_timestep,
+                                 workers=workers)
+    good = checked[_legal(checked, objective.strict(), space)]
     if not len(good):
         return []
     axes = -objective.matrix(good)
@@ -1201,11 +1385,17 @@ def _rank_designs(space: DesignSpace, front: pd.DataFrame, spec: RunSpec,
     kept = kept.assign(_score=objective.score_frame(kept)).sort_values(
         "_score", ascending=False)
     designs = []
+    fields = {f.name for f in dataclass_fields(Metrics)} - {"warnings"}
     for rank, (_, row) in enumerate(kept.iterrows()):
         x = space.canonical_one(row[space.names].to_numpy(dtype=float))
+        # Plain Python scalars, NaN kept: the output serialiser nulls it.
+        values = {k: (v.item() if isinstance(v, np.generic) else v)
+                  for k, v in row.items() if k in fields}
+        values["warnings"] = [w for w in str(row.get("warnings", "")).split("; ") if w]
+        metrics = Metrics(**values)
         designs.append(describe_design(space, x, spec,
                                        "Option {}".format(rank + 1),
-                                       with_curves=rank < 6))
+                                       with_curves=rank < 6, metrics=metrics))
     return designs
 
 

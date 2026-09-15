@@ -96,6 +96,7 @@ code { font-family: var(--mono); font-size: .88em;
   font-size: 10.5px; letter-spacing: .05em; color: var(--ink-3);
   white-space: nowrap; text-transform: uppercase;
 }
+.brand .version-chip { margin-left: 4px; opacity: .7; }
 @media (max-width: 900px) {
   .brand .title { font-size: 12.5px; }
   .brand .byline { display: none; }

@@ -2,8 +2,8 @@
 
 * :func:`direct_search` runs a genetic algorithm against openMotor itself.
   Expensive, but its answer is ground truth.
-* :func:`surrogate_pareto` runs NSGA-II against the trained surrogate, then
-  re-simulates the front so nothing reported is model output.
+* :func:`surrogate_candidates` runs NSGA-II against a trained surrogate and
+  hands back what it proposes, for the simulator to check.
 """
 
 from __future__ import annotations
@@ -310,7 +310,7 @@ def direct_pareto(
 
 
 class _SurrogateProblem(Problem):
-    """Two-objective problem answered by the trained models, not the simulator."""
+    """Multi-objective problem answered by the models, not the simulator."""
 
     def __init__(self, space: DesignSpace, surrogate, objective: Objective) -> None:
         super().__init__(
@@ -360,70 +360,40 @@ class _SurrogateProblem(Problem):
         )
 
 
-def surrogate_pareto(
+def surrogate_candidates(
     space: DesignSpace,
     surrogate,
     objective: Objective,
-    pop_size: int = 200,
-    n_gen: int = 150,
-    timestep: float = 0.005,
-    workers: Optional[int] = None,
+    pop_size: int = 120,
+    n_gen: int = 80,
     seed: int = 0,
     seed_designs: Optional[np.ndarray] = None,
-    reference: Optional[pd.DataFrame] = None,
     callback=None,
 ) -> Dict:
-    """Maps the trade-off against the surrogate, then verifies it.
+    """NSGA-II against the surrogate. Returns designs, not results.
 
-    Survivors are re-simulated and the front recomputed from real numbers, so
-    model error can lose a good design but never promote a bad one.
-
-    ``seed_designs`` and ``reference`` (already-simulated designs) are merged in
-    before the non-dominated set is taken, so the front is never worse than what
-    was already known.
+    ``front`` is the predicted non-dominated set, ``population`` the closing
+    generation ranked as pymoo left it. Both are predictions and MUST be
+    simulated before anything is claimed about them.
     """
     problem = _SurrogateProblem(space, surrogate, objective)
     if seed_designs is not None and len(seed_designs):
         n_seed = min(len(seed_designs), pop_size // 2)
-        initial = np.vstack([
+        sampling = np.vstack([
             space.canonicalize(np.atleast_2d(seed_designs)[:n_seed]),
             sobol_designs(space, pop_size - n_seed, seed=seed),
         ])
-        sampling = initial
     else:
         sampling = LHS()
     algorithm = NSGA2(pop_size=pop_size, sampling=sampling, eliminate_duplicates=True)
     result = minimize(problem, algorithm, ("n_gen", n_gen), seed=seed, verbose=False,
                       **_callback_kwargs(callback))
-
-    if result.X is None:
-        return {"front": pd.DataFrame(), "predicted": pd.DataFrame()}
-
-    X = space.canonicalize(np.atleast_2d(result.X))
-    predicted = surrogate.predict(X)
-    verified = evaluate_batch(space, X, timestep=timestep, workers=workers)
-    for column in ("initial_thrust", "total_impulse", "max_pressure", "peak_mass_flux"):
-        verified["pred_" + column] = predicted[column].to_numpy()
-
-    if reference is not None and len(reference):
-        shared = [c for c in verified.columns if c in reference.columns]
-        verified = pd.concat(
-            [verified, reference[shared]], ignore_index=True, sort=False
-        )
-
-    # Verification is the moment of truth, so the safety margin comes off.
-    violation = scale_constraints(verified, objective.strict(), space).max(axis=1)
-    verified["max_violation_capped"] = violation
-    keep = verified[verified["ok"] & (violation <= 0)].reset_index(drop=True)
-    if not len(keep):
-        return {"front": pd.DataFrame(), "verified": verified, "predicted": predicted}
-    # Rank on whatever the user chose, not on a fixed pair. ``matrix`` already
-    # points downhill, so negate it to get quantities to maximise.
-    axes = -objective.matrix(keep)
-    front = keep.iloc[pareto_indices(axes)]
-    front = front.sort_values(objective.objective_labels[0],
-                              ascending=False).reset_index(drop=True)
-    return {"front": front, "verified": verified, "predicted": predicted}
+    empty = np.zeros((0, space.n_dim))
+    front = (space.canonicalize(np.atleast_2d(result.X))
+             if result.X is not None else empty)
+    population = (space.canonicalize(np.atleast_2d(result.pop.get("X")))
+                  if result.pop is not None and len(result.pop) else empty)
+    return {"front": front, "population": population}
 
 
 def pareto_indices(objectives: np.ndarray) -> np.ndarray:

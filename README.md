@@ -17,6 +17,18 @@ panel. Its [HTML source](docs/guide.html) is the file the PDF is rendered from.
 
 ## Installation
 
+For most people: [download the latest release](https://github.com/rebigex/rocket-optimization/releases/latest),
+extract it, and run what's inside. No Python, git, or compiler needed. It opens in its
+own window rather than a browser tab, and keeps its files under
+`Documents/Rocket Optimizer/` instead of the project folder.
+
+The first launch shows a one-time warning, since these builds are not signed:
+
+- **Windows:** "Windows protected your PC" -> **More info** -> **Run anyway**.
+- **macOS:** open it once, then **System Settings -> Privacy & Security -> Open Anyway**.
+
+To run it from source instead:
+
 ```bash
 python3 app.py
 ```
@@ -89,10 +101,13 @@ different times.
 ## How results are produced
 
 Two search modes are available. The full search runs a genetic search directly against
-openMotor, so every candidate is a real simulation. The surrogate search samples the
-design space, trains models on those samples, runs NSGA-II against the models, and then
-re-simulates the survivors. It is cheaper and faster, and it is marked beta in the
-application because its answers come from a model rather than from the simulator.
+openMotor, so every candidate is a real simulation. The surrogate search spends half
+its budget on a space-filling sample, then works in rounds: it trains models on every
+simulation so far, runs NSGA-II against the models, and simulates the designs the
+models propose. Each round puts the burns where the trade-off curve is, so the models
+are most accurate exactly there. On the reference motor it reaches a fuller curve than
+the full search on the same budget. It is marked beta in the application because it
+has been measured on fewer configurations.
 
 Every design that appears in a result has been simulated in openMotor at the
 verification timestep with all search-time safety margins removed. Surrogate models
@@ -203,6 +218,20 @@ figures. None of it is source, and none of it is committed.
 .venv/bin/python scripts/verify_ordering.py   # check the core-sorting assumption
 .venv/bin/python -m pytest tests/ -q
 ```
+
+### Building the desktop app
+
+```bash
+pip install -r requirements.txt -r requirements-desktop.txt
+python scripts/build_desktop.py
+```
+
+Builds the openMotor vendor tree, freezes the app with PyInstaller, runs it headlessly
+to confirm the frozen build actually works (`desktop.py --smoke`), and writes a zip to
+`dist/`. PyInstaller cannot cross-compile, so this has to run once on macOS and once on
+Windows; `.github/workflows/release.yml` does both on a pushed `vX.Y.Z` tag (which must
+match `rocketopt.__version__`) and attaches the two zips to a GitHub Release. During
+development, `python desktop.py` runs the same window from source, no build needed.
 
 ## Licence
 

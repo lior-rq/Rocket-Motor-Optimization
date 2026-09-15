@@ -213,6 +213,13 @@ class JobRegistry:
         job.finished_at = time.time()
         return True
 
+    def cancel_all(self) -> None:
+        """Signals every running job to stop. Called on window close."""
+        with self._lock:
+            ids = list(self._order)
+        for job_id in ids:
+            self.cancel(job_id)
+
     def start(self, spec: RunSpec, base_motor: Dict, workers: Optional[int] = None,
               predicted: float = 0.0, shape: str = "",
               reports_dir: Optional[Path] = None,

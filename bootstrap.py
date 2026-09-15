@@ -201,6 +201,22 @@ def build(root: Path = ROOT) -> Path:
                 "{}.{}".format(*built) if built else "an unsupported version",
                 MAX_PYTHON[0], MAX_PYTHON[1], MAX_PYTHON[0], MAX_PYTHON[1]))
 
+    prepare_vendor(root, python)
+    copy_plotly(root, python)
+
+    if not can_import(python):
+        raise SystemExit("\nThe environment built but still cannot import "
+                         "everything. Run scripts/setup_env.sh to see the errors.")
+    return python
+
+
+def prepare_vendor(root: Path, python) -> Path:
+    """Clones openMotor, pins it, and builds its native extension in place.
+
+    Split out of ``build`` so ``--vendor-only`` and the desktop build can run
+    the same steps against an interpreter that already has requirements.txt
+    installed, with no venv of its own.
+    """
     vendor = root / "vendor" / "openMotor"
     if not (vendor / ".git").exists():
         vendor.parent.mkdir(parents=True, exist_ok=True)
@@ -231,9 +247,15 @@ def build(root: Path = ROOT) -> Path:
          "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
         capture_output=True, text=True, check=True).stdout.strip()
     (Path(site) / "openmotor_vendor.pth").write_text(str(vendor) + "\n")
+    return vendor
 
-    # The app serves Plotly from disk so it works offline. The JS ships inside
-    # the plotly package; copy it rather than pulling from a CDN.
+
+def copy_plotly(root: Path, python) -> None:
+    """The app serves Plotly from disk so it works offline.
+
+    The JS ships inside the plotly package; copy it rather than pulling
+    from a CDN.
+    """
     plotly_js = subprocess.run(
         [str(python), "-c",
          "import plotly, pathlib; print(pathlib.Path(plotly.__file__).parent "
@@ -244,10 +266,21 @@ def build(root: Path = ROOT) -> Path:
     shutil.copyfile(plotly_js, target / "plotly.min.js")
     print("  copied plotly.min.js for offline use")
 
+
+def vendor_only(root: Path = ROOT) -> None:
+    """Prepares openMotor and Plotly against the current interpreter.
+
+    No venv, no requirements install: for CI and scripts/build_desktop.py,
+    which already run inside an environment with requirements.txt in it.
+    """
+    if shutil.which("git") is None:
+        raise SystemExit("git is required to fetch openMotor.")
+    python = sys.executable
+    prepare_vendor(root, python)
+    copy_plotly(root, python)
     if not can_import(python):
-        raise SystemExit("\nThe environment built but still cannot import "
-                         "everything. Run scripts/setup_env.sh to see the errors.")
-    return python
+        raise SystemExit("\nThe vendor tree built, but this interpreter still "
+                         "cannot import everything it needs.")
 
 
 def ensure(root: Path = ROOT, assume_yes: bool = False,
@@ -287,6 +320,9 @@ def ensure(root: Path = ROOT, assume_yes: bool = False,
 
 
 if __name__ == "__main__":
+    if "--vendor-only" in sys.argv:
+        vendor_only()
+        raise SystemExit(0)
     ready = ensure(assume_yes="--yes" in sys.argv or "-y" in sys.argv,
                    force="--force" in sys.argv)
     print("\n  Ready. Start the app with:  {} app.py\n".format(

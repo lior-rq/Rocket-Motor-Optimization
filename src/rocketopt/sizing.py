@@ -161,11 +161,9 @@ def size_space(spec: RunSpec, n_grains: int,
         for p in parts:
             grand *= p
 
-    budget = spec.budget
     if evaluated is None:
-        evaluated = budget["total"]
-        if spec.mode == "pareto":
-            evaluated += budget["samples"]
+        budget = spec.budget
+        evaluated = budget["samples"] if spec.mode == "pareto" else budget["total"]
 
     result = {
         "total": grand,
