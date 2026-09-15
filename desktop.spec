@@ -88,6 +88,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="icons/app-icon.ico",  # embedded in the .exe; macOS ignores this
 )
 
 coll = COLLECT(
@@ -104,7 +105,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Rocket Optimizer.app",
-    icon=None,
+    icon="icons/app-icon.icns",
     bundle_identifier="com.rebigex.rocketopt",
     info_plist={
         "NSHighResolutionCapable": True,
