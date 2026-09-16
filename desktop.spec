@@ -1,4 +1,4 @@
-# -*- mode: python ; coding: utf-8 -*-
+ # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for the desktop build.
 
 Run via scripts/build_desktop.py, which prepares the openMotor vendor tree

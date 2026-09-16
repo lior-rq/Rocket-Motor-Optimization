@@ -170,7 +170,29 @@ def _shutdown(server, thread) -> None:
     os._exit(0)
 
 
+def _unblock_frozen_dlls() -> None:
+    """Strips Windows' "downloaded from the internet" mark from our DLLs.
+
+    Explorer tags every file it extracts from a downloaded zip with a
+    hidden Zone.Identifier stream. .NET Framework refuses to load a managed
+    DLL carrying it, so pywebview's ``import clr`` fails with "Failed to
+    resolve Python.Runtime.Loader.Initialize" (pythonnet/pywebview#1215).
+    Deleting the stream is what right-click > Properties > Unblock does.
+    """
+    if os.name != "nt" or not paths.FROZEN:
+        return
+    root = os.path.dirname(sys.executable)
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if name.lower().endswith(".dll"):
+                try:
+                    os.remove(os.path.join(dirpath, name) + ":Zone.Identifier")
+                except OSError:
+                    pass  # not blocked, or not on NTFS; nothing to strip
+
+
 def _run_gui() -> None:
+    _unblock_frozen_dlls()
     import webview
 
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
@@ -193,7 +215,12 @@ def _run_gui() -> None:
         api.bind(job_registry, window)
         window.load_url("http://127.0.0.1:{}".format(port))
 
-    webview.start(func=boot, args=(window,))
+    # A source run has no .icns/.ico, so the OS dock/taskbar falls back to
+    # Python's own default icon. Frozen builds already carry the real icon
+    # via desktop.spec (EXE/BUNDLE icon=), so this path won't exist there
+    # and pywebview silently skips it.
+    icon = str(paths.ROOT / "icons" / "app-icon.png")
+    webview.start(func=boot, args=(window,), icon=icon)
 
     # webview.start() returns once every window is closed (including Cmd-Q).
     server, thread = state.get("server"), state.get("thread")

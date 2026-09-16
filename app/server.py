@@ -5,6 +5,8 @@ All the work lives in ``rocketopt.runner``; this translates it to and from JSON.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import multiprocessing
 import os
 import subprocess
@@ -16,7 +18,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -691,16 +693,43 @@ def job_status(job_id: str) -> JSONResponse:
     return JSONResponse(job.status_dict())
 
 
+def _live_dict(job) -> Dict:
+    status = job.status_dict()
+    status["telemetry"] = job.telemetry
+    status["best"] = job.best
+    return jsonable(status)
+
+
 @app.get("/api/jobs/{job_id}/live")
 def job_live(job_id: str) -> JSONResponse:
     """The search as it stands right now, for the waiting screen."""
     job = jobs.get(job_id)
     if job is None:
         raise HTTPException(404, "No such run.")
-    status = job.status_dict()
-    status["telemetry"] = job.telemetry
-    status["best"] = job.best
-    return JSONResponse(jsonable(status))
+    return JSONResponse(_live_dict(job))
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def job_events(job_id: str) -> StreamingResponse:
+    """The same as /live, pushed. One frame every half second until the run
+    ends, so the waiting screen moves without polling."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "No such run.")
+
+    async def stream():
+        last = None
+        while True:
+            frame = json.dumps(_live_dict(job))
+            if frame != last:
+                yield "data: {}\n\n".format(frame)
+                last = frame
+            if job.status in ("done", "failed", "cancelled"):
+                return
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"X-Accel-Buffering": "no"})
 
 
 @app.get("/api/jobs/{job_id}/best.ric")
@@ -816,16 +845,10 @@ def design_curves(payload: CurvePayload) -> JSONResponse:
 
 @app.middleware("http")
 async def no_store(request, call_next):
-    """A cached index.html against a fresh app.js breaks the page silently."""
+    """A cached index.html against a fresh bundle breaks the page silently."""
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
     return response
-
-
-@app.get("/legacy")
-def legacy_view() -> FileResponse:
-    """The single-page interface the wizard replaced."""
-    return FileResponse(STATIC / "legacy.html")
 
 
 app.mount("/", StaticFiles(directory=str(STATIC), html=True), name="static")

@@ -7,6 +7,7 @@ installed -- it ships in requirements-desktop.txt, not requirements.txt.
 
 import base64
 import json
+import os
 import sys
 import types
 
@@ -81,6 +82,33 @@ def test_cancel_all_stops_every_running_job():
     assert running.status == "cancelled"
     assert running._cancel.is_set()
     assert done.status == "done"          # already finished; left alone
+
+
+def test_unblock_frozen_dlls_skips_when_not_a_frozen_windows_build(monkeypatch):
+    from app import desktop, paths
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(paths, "FROZEN", True)
+    monkeypatch.setattr(os, "remove", lambda *a: pytest.fail("should not run"))
+
+    desktop._unblock_frozen_dlls()
+
+
+def test_unblock_frozen_dlls_strips_the_zone_identifier_stream(tmp_path, monkeypatch):
+    from app import desktop, paths
+    exe_dir = tmp_path / "Rocket Optimizer"
+    (exe_dir / "_internal" / "pythonnet" / "runtime").mkdir(parents=True)
+    dll = exe_dir / "_internal" / "pythonnet" / "runtime" / "Python.Runtime.dll"
+    dll.write_bytes(b"")
+    (exe_dir / "_internal" / "readme.txt").write_bytes(b"")  # not a .dll
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(paths, "FROZEN", True)
+    monkeypatch.setattr(sys, "executable", str(exe_dir / "Rocket Optimizer.exe"))
+    removed = []
+    monkeypatch.setattr(os, "remove", removed.append)
+
+    desktop._unblock_frozen_dlls()
+
+    assert removed == [str(dll) + ":Zone.Identifier"]
 
 
 def test_about_reports_version_and_platform():
