@@ -7,6 +7,7 @@ it does, its room against each limit, and where it sits on the curve.
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 import zipfile
@@ -158,6 +159,9 @@ def design_html(design: Dict, index: int, run: ReportRun, base_motor: Dict,
         ("Propellant mass", "{:.2f} kg".format(design.get("prop_mass", 0))),
         ("Designation", esc(design.get("designation", "—"))),
     ]
+    rail_v = design.get("rail_velocity")
+    if rail_v is not None and math.isfinite(rail_v):
+        performance.insert(-1, ("Rail exit speed", "{:.1f} m/s".format(rail_v)))
     perf = "".join("<dt>{}</dt><dd>{}</dd>".format(esc(k), v) for k, v in performance)
 
     geometry = [

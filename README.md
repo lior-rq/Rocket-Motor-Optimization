@@ -90,13 +90,21 @@ flux 1.05 lb/in²s, port/throat ratio 1.4 and peak core Mach 1.0, which are
 amateur-practice numbers rather than the case rating a `.ric` file usually carries.
 openMotor only warns when a core goes supersonic, so the search holds that one itself.
 
-Eighteen metrics are available as objectives or limits. Each can be maximised,
+Nineteen metrics are available as objectives or limits. Each can be maximised,
 minimised or driven toward a target value. Selecting two produces a trade-off curve
 rather than a single result. Some limits are offered switched off, among them residual
 propellant: the share of the load still unburned when the motor quits, because thrust
 fell under openMotor's burnout threshold or the pressure fell out of the propellant's
 burn-rate range. It is the sliver left when cores of different sizes finish at
 different times.
+
+Rail exit speed is the one metric that needs the rocket described as well as the
+motor: the hardware mass (everything that flies except propellant), the rail length
+and its angle from vertical. Each design is flown up the rail on its own thrust curve
+at that mass plus its own propellant, with the mass held at its liftoff value and
+drag ignored, which is what the team's standalone calculation does too. The
+constraints page also reports the heaviest hardware the loaded motor would carry to
+the target speed.
 
 ## How results are produced
 

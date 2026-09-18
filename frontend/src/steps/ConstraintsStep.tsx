@@ -1,8 +1,8 @@
 import { AnimatePresence, motion } from "motion/react";
-import { Button, Card, Check, Empty, Pill, TextField, cx, rise, stagger } from "@/components/ui";
+import { Button, Card, Check, Empty, Field, Pill, TextField, cx, rise, stagger } from "@/components/ui";
 import { supExp } from "@/lib/format";
 import { parseNumber } from "@/lib/units";
-import type { Sizing } from "@/lib/types";
+import type { RailSpec, RunSpec, Sizing } from "@/lib/types";
 import { useApp } from "@/store/app";
 import { useUnits } from "@/store/select";
 import { StepHead } from "./StepHead";
@@ -32,7 +32,11 @@ export function ConstraintsStep() {
                     <div className="flex items-center gap-2">
                       <Check checked={c.enabled} onChange={on => s.edit(sp => { sp.constraints[i].enabled = on; })} />
                       <select className="input flex-1" value={c.metric} title={s.metrics[c.metric]?.help}
-                              onChange={e => s.edit(sp => { sp.constraints[i].metric = e.target.value; sp.constraints[i].label = ""; })}>
+                              onChange={e => s.edit(sp => {
+                                sp.constraints[i].metric = e.target.value; sp.constraints[i].label = "";
+                                // A speed off the rail is only ever a floor.
+                                if (e.target.value === RAIL) sp.constraints[i].op = ">=";
+                              })}>
                         {Object.entries(s.metrics).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
                       </select>
                       <button type="button" title="Remove" className="text-ink-3 hover:text-bad text-lg leading-none px-1"
@@ -58,10 +62,64 @@ export function ConstraintsStep() {
         </Card>
 
         <div className="flex flex-col gap-4 min-w-0">
+          <LaunchRail />
           <BaselineCheck />
           <SizingCard />
         </div>
       </div>
+    </motion.div>
+  );
+}
+
+const RAIL = "rail_velocity";
+
+const usesRail = (spec: RunSpec) =>
+  spec.constraints.some(c => c.enabled && c.metric === RAIL) || spec.objectives.some(o => o.enabled && o.metric === RAIL);
+
+// The one limit that needs the rocket, not just the motor. Appears once a
+// row asks for it, and answers the question the row raises: how heavy can
+// the rocket be and still make the speed.
+function LaunchRail() {
+  const s = useApp();
+  const units = useUnits();
+  const spec = s.spec;
+  const fig = s.validation.rail;
+  if (!spec || !usesRail(spec)) return null;
+  const rail = spec.rail;
+  const mass = units.sys.mass, len = units.sys.rail;
+  const num = (v: number, dp: number) => v.toLocaleString(undefined, { maximumFractionDigits: dp });
+  const set = (fn: (r: RailSpec) => void) => s.edit(sp => { fn(sp.rail); });
+  // Mounts after the page has animated in, so it drives its own variants.
+  return (
+    <motion.div variants={stagger} initial="hidden" animate="show">
+      <Card title="Launch rail" sub="What the rail exit speed is measured against">
+        <div className="grid grid-cols-3 gap-2">
+          <Field label={`Hardware mass (${mass.label})`} hint="Everything that flies except propellant">
+            <TextField inputMode="decimal" align="right" placeholder="required"
+              value={rail.hardware_mass ? (rail.hardware_mass / mass.scale).toFixed(mass.dp) : ""}
+              onCommit={t => { const p = parseNumber(t); set(r => { r.hardware_mass = isNaN(p) || p <= 0 ? null : p * mass.scale; }); }} />
+          </Field>
+          <Field label={`Rail length (${len.label})`} hint="Travel before the last button leaves">
+            <TextField inputMode="decimal" align="right"
+              value={(rail.length / len.scale).toFixed(len.dp)}
+              onCommit={t => { const p = parseNumber(t); if (!isNaN(p) && p > 0) set(r => { r.length = p * len.scale; }); }} />
+          </Field>
+          <Field label="Angle from vertical (°)">
+            <TextField inputMode="decimal" align="right"
+              value={String(rail.angle_deg)}
+              onCommit={t => { const p = parseNumber(t); if (!isNaN(p) && p >= 0 && p < 90) set(r => { r.angle_deg = p; }); }} />
+          </Field>
+        </div>
+        {fig && (fig.baseline_velocity !== null || fig.target) && (
+          <div className="flex flex-col gap-1 text-[12.5px] text-ink-2">
+            {fig.baseline_velocity !== null && (
+              <span>Your motor leaves the rail at <b className="num text-ink">{num(fig.baseline_velocity, 1)} m/s</b>.</span>)}
+            {fig.target ? (fig.max_hardware_mass !== null
+              ? <span>Heaviest hardware it lifts to {num(fig.target, 1)} m/s: <b className="num text-ink">{num(fig.max_hardware_mass / mass.scale, mass.dp)} {mass.label}</b>.</span>
+              : <span>Even with no hardware at all it would not reach {num(fig.target, 1)} m/s on this rail.</span>) : null}
+          </div>
+        )}
+      </Card>
     </motion.div>
   );
 }
@@ -97,12 +155,14 @@ function Dupes() {
 function BaselineCheck() {
   const m = useApp(s => s.motor);
   const spec = useApp(s => s.spec);
+  const fig = useApp(s => s.validation.rail);
   const units = useUnits();
   if (!m || !spec) return null;
   const num = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 3 });
   let unknown = 0;
   const rows = spec.constraints.filter(c => c.enabled).map((c, i) => {
-    const raw = m[c.metric] as number | undefined;
+    // The rail speed is measured against the rocket, so it comes from validate.
+    const raw = c.metric === RAIL ? fig?.baseline_velocity : m[c.metric] as number | undefined;
     if (raw === undefined || raw === null || Number.isNaN(raw)) { unknown++; return null; }
     const have = units.metricToDisplay(c.metric, raw);
     const want = units.metricToDisplay(c.metric, c.value);

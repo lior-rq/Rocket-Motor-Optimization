@@ -189,7 +189,7 @@ def _limit_check(metrics: Metrics, constraints) -> Dict[str, bool]:
 
 def propagate(motor: Dict, tolerances: Sequence[ToleranceSpec], constraints,
               samples: int = 400, timestep: float = 0.01, seed: int = 0,
-              workers: Optional[int] = None) -> Dict:
+              workers: Optional[int] = None, rail=None) -> Dict:
     """Simulates the same design many times, built slightly differently each time.
 
     A coarser timestep than final verification is deliberate: this is a
@@ -201,13 +201,13 @@ def propagate(motor: Dict, tolerances: Sequence[ToleranceSpec], constraints,
     from .sampling import simulate_many
 
     active = [t for t in tolerances if t.enabled and t.sigma > 0]
-    nominal = simulate_motor(motor, timestep=timestep)
+    nominal = simulate_motor(motor, timestep=timestep, rail=rail)
     if not active:
         return {"available": False, "reason": "no tolerances set"}
 
     rng = np.random.default_rng(seed)
     builds = [perturb(motor, active, rng) for _ in range(samples)]
-    results = simulate_many(builds, timestep=timestep, workers=workers)
+    results = simulate_many(builds, timestep=timestep, workers=workers, rail=rail)
 
     good = [m for m in results if m.ok]
     if not good:

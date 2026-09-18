@@ -208,7 +208,7 @@ def build_space(spec: RunSpec, base_motor: Dict,
     if tl is not None:
         internal.append(tl)
     return DesignSpace(base_motor, config, variables=internal,
-                       ordering=spec.ordering)
+                       ordering=spec.ordering, rail=spec.rail)
 
 
 def design_space(spec: RunSpec, base_motor: Dict, design: Dict) -> DesignSpace:
@@ -320,6 +320,8 @@ def default_spec(base_motor: Dict) -> RunSpec:
                        enabled=False, label="Mean chamber pressure"),
         ConstraintSpec(metric="total_impulse", op=">=", value=0.0, enabled=False,
                        label="Total impulse"),
+        ConstraintSpec(metric="rail_velocity", op=">=", value=25.0, enabled=False,
+                       label="Rail exit speed"),
     ]
     return RunSpec(
         variables=variables,
@@ -337,14 +339,14 @@ def default_spec(base_motor: Dict) -> RunSpec:
 
 
 def timestep_bias(base_motor: Dict, search_dt: float, verify_dt: float,
-                  metrics=OPTIMISABLE_METRICS) -> Dict[str, float]:
+                  metrics=OPTIMISABLE_METRICS, rail=None) -> Dict[str, float]:
     """How much each metric shifts between search fidelity and verification.
 
     Measured on the loaded motor rather than guessed, so a design sitting on a
     limit during the search still satisfies it after verification.
     """
-    coarse = simulate_motor(base_motor, timestep=search_dt)
-    fine = simulate_motor(base_motor, timestep=verify_dt)
+    coarse = simulate_motor(base_motor, timestep=search_dt, rail=rail)
+    fine = simulate_motor(base_motor, timestep=verify_dt, rail=rail)
     bias: Dict[str, float] = {}
     for name in metrics:
         c = float(getattr(coarse, name, 0.0) or 0.0)
@@ -422,7 +424,8 @@ def describe_design(space: DesignSpace, x: np.ndarray, spec: RunSpec,
     x = space.canonical_one(np.asarray(x, dtype=float))
     motor = space.to_motor(x)
     if metrics is None:
-        metrics = simulate_motor(motor, timestep=spec.verify_timestep)
+        metrics = simulate_motor(motor, timestep=spec.verify_timestep,
+                                 rail=spec.rail)
     row = metrics.as_row()
     row.update({
         "label": label,
@@ -619,7 +622,8 @@ def run(spec: RunSpec, base_motor: Dict, on_progress: ProgressFn = _noop,
     result = RunResult(spec=spec.to_dict())
     on_progress("baseline", 0.02, "Simulating your current motor")
 
-    baseline_metrics = simulate_motor(base_motor, timestep=spec.verify_timestep)
+    baseline_metrics = simulate_motor(base_motor, timestep=spec.verify_timestep,
+                                      rail=spec.rail)
     # Verification uses the limits exactly as the user typed them.
     verify_objective = build_objective(spec, baseline_metrics, bias=None).strict()
     budget = spec.budget
@@ -753,7 +757,8 @@ def _build_stacks(spec: RunSpec, base_motor: Dict, baseline_metrics) -> List[_St
     for n in grain_counts(spec, base_motor):
         space = build_space(spec, base_motor, n)
         motor_n = space.base
-        bias = timestep_bias(motor_n, spec.search_timestep, spec.verify_timestep)
+        bias = timestep_bias(motor_n, spec.search_timestep, spec.verify_timestep,
+                             rail=spec.rail)
         objective = build_objective(spec, baseline_metrics, bias)
         stacks.append(_Stack(n=n, space=space, objective=objective,
                              seeds=space.from_motor(motor_n)[None, :],

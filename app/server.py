@@ -22,17 +22,18 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from rocketopt.rail import max_hardware_mass, rail_exit_velocity
 from rocketopt.ric import load_ric, motor_path, save_ric
 from rocketopt.runner import (apply_hardware, build_space, default_spec,
                               grain_counts,
                               describe_design, jsonable)
-from rocketopt.simulate import PA_PER_PSI, curves, simulate_motor
+from rocketopt.simulate import PA_PER_PSI, curves, simulate_motor, thrust_curve
 from rocketopt.sizing import reduction_chain, size_space
 from rocketopt.tolerance import (TOLERANCE_FIELDS, ToleranceSpec,
                                  default_tolerances, propagate, summarise)
 from rocketopt.spec import (EFFORT_LEVELS, MAX_DESIGNS, OPTIMISABLE_METRICS,
-                            ORDERING_MODES, SURROGATE_GEN, SURROGATE_POP,
-                            RunSpec)
+                            ORDERING_MODES, RAIL_METRIC, SURROGATE_GEN,
+                            SURROGATE_POP, RunSpec)
 from rocketopt.units import KG_M2S_PER_LB_IN2S
 from rocketopt import __version__ as VERSION
 
@@ -57,6 +58,10 @@ STATE: Dict = {"motor": None, "name": ""}
 #: Hardware overrides from the Hardware panel. Empty unless explicitly edited,
 #: so a loaded .ric simulates as its file says.
 HARDWARE: Dict = {}
+
+#: The loaded motor's burn, kept for the rail figures on the constraints
+#: page. Held against the motor object, so a reload measures afresh.
+_CURVE: Dict = {"motor": None}
 
 
 def _apply(motor: Dict) -> Dict:
@@ -86,6 +91,31 @@ def _require_motor() -> Dict:
     if STATE["motor"] is None:
         raise HTTPException(400, "Load a motor file first.")
     return STATE["motor"]
+
+
+def _baseline_curve(motor: Dict):
+    if _CURVE["motor"] is not motor:
+        _CURVE.update(motor=motor, curve=thrust_curve(motor, timestep=0.002))
+    return _CURVE["curve"]
+
+
+def _rail_figures(spec: RunSpec, motor: Dict) -> Optional[Dict]:
+    """The loaded motor on the configured rail: its exit speed with the
+    given hardware, and the heaviest hardware that still makes the target."""
+    if not spec.uses_rail or not spec.rail.length > 0:
+        return None
+    time, thrust, prop_mass = _baseline_curve(motor)
+    rail = spec.rail
+    target = next((c.value for c in spec.enabled_constraints
+                   if c.metric == RAIL_METRIC and c.op == ">="), None)
+    out = {"baseline_velocity": None, "max_hardware_mass": None, "target": target}
+    if rail.configured:
+        out["baseline_velocity"] = rail_exit_velocity(
+            time, thrust, rail.hardware_mass + prop_mass, rail.length, rail.angle_deg)
+    if target:
+        out["max_hardware_mass"] = max_hardware_mass(
+            time, thrust, prop_mass, target, rail.length, rail.angle_deg)
+    return out
 
 
 def motor_summary(motor: Dict) -> Dict:
@@ -270,6 +300,10 @@ def validate(payload: SpecPayload) -> JSONResponse:
         sizing["reduction"] = _plain_counts(reduction_chain(spec, motor))
     except Exception:
         sizing["reduction"] = None      # never let an extra insight break validate
+    try:
+        rail = _rail_figures(spec, motor)
+    except Exception:
+        rail = None
     # Zero means the rules contradict the bounds; say so before the run.
     if sizing.get("total") == 0:
         found.append(("variables",
@@ -298,11 +332,12 @@ def validate(payload: SpecPayload) -> JSONResponse:
         variant.budget_simulations = None
         variant.seeds = None
         presets[key] = _estimate(variant)["seconds"]
-    return JSONResponse({"problems": [m for _, m in found],
-                         "problem_areas": [a for a, _ in found],
-                         "notes": notes,
-                         "estimate": estimate, "sizing": sizing,
-                         "preset_seconds": presets})
+    return JSONResponse(jsonable({"problems": [m for _, m in found],
+                                  "problem_areas": [a for a, _ in found],
+                                  "notes": notes,
+                                  "estimate": estimate, "sizing": sizing,
+                                  "preset_seconds": presets,
+                                  "rail": rail}))
 
 
 def _size_counts(spec: RunSpec, motor: Dict, counts, evaluated: int,
@@ -825,7 +860,7 @@ def robustness(payload: RobustnessRequest) -> JSONResponse:
     tolerances = [ToleranceSpec.from_dict(t) for t in payload.tolerances]
     report = propagate(built, tolerances, spec.enabled_constraints,
                        samples=max(50, min(int(payload.samples), 2000)),
-                       timestep=spec.search_timestep)
+                       timestep=spec.search_timestep, rail=spec.rail)
     report["summary"] = summarise(report)
     return JSONResponse(jsonable(report))
 

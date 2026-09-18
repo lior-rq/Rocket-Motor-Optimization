@@ -24,6 +24,7 @@ const SPEC_ROWS: [string, string, string | null, number | null][] = [
   ["port_throat", "Port/throat", "", 2],
   ["prop_mass", "Propellant", "kg", 3],
   ["residual_pct", "Residual propellant", "%", 2],
+  ["rail_velocity", "Rail exit speed", "m/s", 1],
 ];
 
 export function SpecSheet({ ctx }: { ctx: Ctx }) {

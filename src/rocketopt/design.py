@@ -26,7 +26,7 @@ import numpy as np
 from motorlib.propellant import Propellant
 
 from .ric import clone
-from .spec import OrderingSpec, VariableSpec
+from .spec import OrderingSpec, RailSpec, VariableSpec
 from .units import round_up_to_step, snap
 
 
@@ -96,9 +96,12 @@ class DesignSpace:
 
     def __init__(self, base_motor: Dict, config: SpaceConfig | None = None,
                  variables: Optional[Sequence[VariableSpec]] = None,
-                 ordering: Optional[OrderingSpec] = None) -> None:
+                 ordering: Optional[OrderingSpec] = None,
+                 rail: Optional[RailSpec] = None) -> None:
         self.base = clone(base_motor)
         self.config = config or SpaceConfig()
+        #: The rocket and rail every burn in this space is flown up, if any.
+        self.rail = rail
         self.n_grains = len(self.base["grains"])
         if self.n_grains == 0:
             raise ValueError("baseline motor has no grains")
@@ -191,7 +194,8 @@ class DesignSpace:
         Assuming the base class gives workers the wrong number of variables.
         """
         return type(self), {"base_motor": self.base, "config": self.config,
-                            "variables": self.specs, "ordering": self.ordering}
+                            "variables": self.specs, "ordering": self.ordering,
+                            "rail": self.rail}
 
     # ---------------------------------------------------------------- bounds
 

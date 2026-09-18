@@ -39,6 +39,7 @@ TARGETS: List[str] = [
     "volume_loading",
     "peak_mach",
     "residual_pct",
+    "rail_velocity",
 ]
 
 #: Quantities computed exactly by DesignSpace.features, so never learned.
@@ -118,7 +119,7 @@ class Surrogate:
         both sides. Failed simulations carry no targets and are dropped.
         ``targets`` limits the fit to some of :data:`TARGETS`; others already
         fitted are kept. A ``test_size`` of 0 fits on every row and scores
-        nothing.
+        nothing. A target no burn measured (NaN throughout) is skipped.
         """
         usable = frame[frame["ok"]].reset_index(drop=True)
         X = usable[self.feature_names].to_numpy(dtype=float)
@@ -129,6 +130,8 @@ class Surrogate:
         else:
             idx_train, idx_test = np.arange(len(usable)), np.arange(0)
         targets = list(targets) if targets is not None else list(TARGETS)
+        targets = [t for t in targets
+                   if t in usable.columns and usable[t].notna().any()]
         self.scores = [s for s in self.scores if s.target not in targets]
         for target in targets:
             y = usable[target].to_numpy(dtype=float)

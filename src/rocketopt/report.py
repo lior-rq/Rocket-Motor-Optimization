@@ -25,6 +25,7 @@ from .runner import build_space, motor_for
 from .simulate import PA_PER_PSI, curves, simulate_motor
 from .spec import OPTIMISABLE_METRICS, RunSpec
 from .units import KG_M2S_PER_LB_IN2S as LB
+from .units import KG_PER_LB, M_PER_FT
 from .units import M_PER_IN as IN
 
 #: Whose tool this is. Carried on every report the app generates.
@@ -91,6 +92,10 @@ class Units:
     flux: str = "lb/in²s"
     flux_scale: float = LB
     flux_places: int = 3
+    mass: str = "lb"
+    mass_scale: float = KG_PER_LB
+    rail: str = "ft"
+    rail_scale: float = M_PER_FT
 
     @classmethod
     def from_spec(cls, spec: Optional[RunSpec]) -> "Units":
@@ -98,7 +103,8 @@ class Units:
         if chosen.get("length") == "mm":
             return cls(length="mm", length_scale=0.001, length_places=1,
                        pressure="MPa", pressure_scale=1e6, pressure_places=2,
-                       flux="kg/m²s", flux_scale=1.0, flux_places=0)
+                       flux="kg/m²s", flux_scale=1.0, flux_places=0,
+                       mass="kg", mass_scale=1.0, rail="m", rail_scale=1.0)
         return cls()
 
 
@@ -556,6 +562,12 @@ def _fixed_section(runs, base_motor, grain, nozzle) -> str:
                                    round(display(c.metric, c.value), 4),
                                    metric_unit(c.metric)))
               for c in spec.enabled_constraints]
+    if spec.uses_rail and spec.rail.configured:
+        limits.append(("Launch rail", "{:.2f} {} of hardware on a {:.1f} {} rail, "
+                       "{:g}° from vertical".format(
+                           spec.rail.hardware_mass / _U.mass_scale, _U.mass,
+                           spec.rail.length / _U.rail_scale, _U.rail,
+                           spec.rail.angle_deg)))
 
     def describe(var):
         u = _U.length
@@ -735,6 +747,9 @@ def _feasible_section(run, key, base_motor, figures) -> str:
     detail += [("Specific impulse", "{:.1f} s".format(best["isp"])),
                ("Burn time", "{:.2f} s".format(best["burn_time"])),
                ("Propellant mass", "{:.2f} kg".format(best["prop_mass"]))]
+    rail_v = best.get("rail_velocity")
+    if rail_v is not None and np.isfinite(rail_v):
+        detail.append(("Rail exit speed", "{:.1f} m/s".format(rail_v)))
 
     front_fig = figures.get(key + "_front")
     curve_fig = figures.get(key + "_curves")

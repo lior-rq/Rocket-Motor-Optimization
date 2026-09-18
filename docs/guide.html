@@ -351,6 +351,14 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       openMotor&rsquo;s burnout threshold or the pressure fell out of the
       propellant&rsquo;s burn-rate range: the sliver left when cores of different sizes
       finish at different times. Tick it to cap that at a few percent.</p>
+      <p><em>Rail exit speed</em> is the one limit that needs the rocket, not just the
+      motor. Ticking it opens a <strong>Launch rail</strong> card asking for the
+      hardware mass (everything that flies except propellant: airframe, recovery,
+      payload and the motor case), the rail length and its angle from vertical.
+      Every design is then flown up the rail on its own thrust curve, at that hardware
+      mass plus its own propellant, and the speed at the top is what the limit is
+      read against. The card also shows the heaviest hardware the loaded motor would
+      lift to the target speed, which is usually the number you actually wanted.</p>
       <p>Below the table, the loaded motor is shown against every limit, both as a
       table and as its pressure, Kn and mass flux over time with the limits drawn on
       as dotted lines.</p>

@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from .units import M_PER_FT
+
 #: Metrics a user may optimise or constrain. Anything on Metrics could be
 #: offered, but these are the ones that mean something to a motor builder.
 OPTIMISABLE_METRICS: Dict[str, Dict] = {
@@ -55,7 +57,16 @@ OPTIMISABLE_METRICS: Dict[str, Dict] = {
                              "pressure below the propellant's burn-rate range. "
                              "The sliver left when cores of different sizes "
                              "finish at different times."},
+    "rail_velocity": {"label": "Rail exit speed", "unit": "m/s", "kind": None,
+                      "places": 1,
+                      "help": "Speed when the rocket leaves the launch rail, from "
+                              "this motor's thrust curve and the rocket's mass. "
+                              "Needs the hardware mass and rail from the Launch "
+                              "rail card."},
 }
+
+#: The one metric that needs the rocket described, not just the motor.
+RAIL_METRIC = "rail_velocity"
 
 #: Designs kept from a run. Sheets, .eng and .ric downloads follow it.
 MAX_DESIGNS = 90
@@ -208,6 +219,38 @@ class GrainCountSpec:
 MAX_GRAIN_COUNT = 12
 
 
+@dataclass
+class RailSpec:
+    """The launch rail and the rocket on it, for the rail exit speed metric.
+
+    ``hardware_mass`` is everything that flies except propellant: airframe,
+    recovery, payload and the motor case. None leaves the metric unmeasured.
+    ``length`` is the travel before the last rail button leaves.
+    """
+
+    hardware_mass: Optional[float] = None       # kg
+    length: float = 25 * M_PER_FT               # m
+    angle_deg: float = 7.0                      # from vertical
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.hardware_mass and self.hardware_mass > 0
+                    and self.length > 0)
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict]) -> "RailSpec":
+        data = data or {}
+        mass = data.get("hardware_mass")
+        return cls(
+            hardware_mass=float(mass) if mass is not None else None,
+            length=float(data.get("length", 25 * M_PER_FT) or 0.0),
+            angle_deg=float(data.get("angle_deg", 7.0) or 0.0),
+        )
+
+
 def core_specs(spec: "RunSpec", n_grains: int) -> List[VariableSpec]:
     """Core variables for ``n_grains`` grains, one per slot.
 
@@ -272,6 +315,7 @@ class RunSpec:
     constraints: List[ConstraintSpec] = field(default_factory=list)
     ordering: OrderingSpec = field(default_factory=OrderingSpec)
     grain_count: GrainCountSpec = field(default_factory=GrainCountSpec)
+    rail: RailSpec = field(default_factory=RailSpec)
     effort: str = "standard"
     #: Total simulations to spend, across every seed. None follows the preset.
     budget_simulations: Optional[int] = None
@@ -304,6 +348,12 @@ class RunSpec:
     @property
     def enabled_constraints(self) -> List[ConstraintSpec]:
         return [c for c in self.constraints if c.enabled]
+
+    @property
+    def uses_rail(self) -> bool:
+        """Whether any goal or limit reads the rail exit speed."""
+        return (any(o.metric == RAIL_METRIC for o in self.enabled_objectives)
+                or any(c.metric == RAIL_METRIC for c in self.enabled_constraints))
 
     @property
     def budget(self) -> Dict:
@@ -373,6 +423,14 @@ class RunSpec:
                 found.append(("variables",
                               "Mandrel groups need a fixed grain count. Fix the count "
                               "or choose another core rule."))
+        if self.uses_rail:
+            if not (self.rail.hardware_mass and self.rail.hardware_mass > 0):
+                found.append(("constraints",
+                              "Rail exit speed needs the rocket's hardware mass, "
+                              "set on the Constraints page."))
+            if not self.rail.length > 0:
+                found.append(("constraints",
+                              "Rail exit speed needs a rail length."))
         return found
 
     def validate(self) -> List[str]:
@@ -386,6 +444,7 @@ class RunSpec:
             "constraints": [c.to_dict() for c in self.constraints],
             "ordering": self.ordering.to_dict(),
             "grain_count": self.grain_count.to_dict(),
+            "rail": self.rail.to_dict(),
             "effort": self.effort,
             "budget_simulations": self.budget_simulations,
             "seeds": self.seeds,
@@ -406,6 +465,7 @@ class RunSpec:
             constraints=[ConstraintSpec.from_dict(c) for c in data.get("constraints", [])],
             ordering=OrderingSpec.from_dict(data.get("ordering", {})),
             grain_count=GrainCountSpec.from_dict(data.get("grain_count")),
+            rail=RailSpec.from_dict(data.get("rail")),
             effort=data.get("effort", "standard"),
             budget_simulations=(int(data["budget_simulations"])
                                 if data.get("budget_simulations") else None),

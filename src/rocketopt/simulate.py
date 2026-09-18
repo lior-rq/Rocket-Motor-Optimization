@@ -5,12 +5,14 @@ from __future__ import annotations
 import time
 import warnings
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 
 from motorlib.motor import Motor
 from motorlib.simResult import SimAlertLevel
+
+from .rail import rail_exit_velocity
 
 # fsolve chatters on over-expanded nozzles; openMotor's own alerts say the same.
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -49,6 +51,8 @@ class Metrics:
     separation_pct: float = 0.0
     #: Propellant left when the motor quits, as a share of the load.
     residual_pct: float = 0.0
+    #: Speed off the launch rail. NaN until a rocket and rail are given.
+    rail_velocity: float = float("nan")
     designation: str = ""
     n_warnings: int = 0
     warnings: List[str] = field(default_factory=list)
@@ -68,12 +72,16 @@ def _residual_pct(result) -> float:
     return 100.0 * max(float(result.getPropellantMass(-1)), 0.0) / loaded
 
 
-def simulate_motor(motor_dict: Dict, timestep: float | None = None) -> Metrics:
+def simulate_motor(motor_dict: Dict, timestep: float | None = None,
+                   rail=None) -> Metrics:
     """Runs one motor and reduces the result to :class:`Metrics`.
 
     A design that openMotor rejects outright (impossible geometry, and so on)
     comes back with ``ok=False`` rather than raising, so a sampling sweep never
     dies on a bad corner of the space.
+
+    ``rail`` is a :class:`~rocketopt.spec.RailSpec`. Given one that is
+    configured, the burn is also flown up the rail for ``rail_velocity``.
     """
     motor_dict = dict(motor_dict)
     if timestep is not None:
@@ -111,6 +119,12 @@ def simulate_motor(motor_dict: Dict, timestep: float | None = None) -> Metrics:
 
     avg_thrust = float(result.getAverageForce())
     peak_thrust = float(force.max())
+    prop_mass = float(result.getPropellantMass())
+    rail_velocity = float("nan")
+    if rail is not None and rail.configured:
+        rail_velocity = rail_exit_velocity(time_axis, force,
+                                           rail.hardware_mass + prop_mass,
+                                           rail.length, rail.angle_deg)
     warnings_list = [
         alert.description for alert in result.getAlertsByLevel(SimAlertLevel.WARNING)
     ]
@@ -130,7 +144,7 @@ def simulate_motor(motor_dict: Dict, timestep: float | None = None) -> Metrics:
         peak_mass_flux=float(result.getPeakMassFlux()),
         peak_mach=float(result.getPeakMachNumber()),
         port_throat=float(result.getPortRatio()),
-        prop_mass=float(result.getPropellantMass()),
+        prop_mass=prop_mass,
         volume_loading=float(result.getVolumeLoading()),
         initial_kn=float(result.getInitialKN()),
         peak_kn=float(result.getPeakKN()),
@@ -142,6 +156,7 @@ def simulate_motor(motor_dict: Dict, timestep: float | None = None) -> Metrics:
             )
         ),
         residual_pct=_residual_pct(result),
+        rail_velocity=rail_velocity,
         designation=str(result.getFullDesignation()),
         n_warnings=len(warnings_list),
         warnings=warnings_list,
@@ -168,6 +183,18 @@ def constraint_violations(metrics: Metrics, space) -> np.ndarray:
             (metrics.peak_kn / kn_limit - 1.0) if kn_limit else -1.0,
         ]
     )
+
+
+def thrust_curve(motor_dict: Dict,
+                 timestep: float = 0.002) -> Tuple[np.ndarray, np.ndarray, float]:
+    """Time, thrust and propellant mass of one burn, for rail figures."""
+    motor_dict = dict(motor_dict)
+    motor_dict["config"] = dict(motor_dict["config"], timestep=timestep)
+    with np.errstate(all="ignore"):
+        result = Motor(motor_dict).runSimulation()
+    return (np.asarray(result.channels["time"].getData(), dtype=float),
+            np.asarray(result.channels["force"].getData(), dtype=float),
+            float(result.getPropellantMass()))
 
 
 def curves(motor_dict: Dict, timestep: float = 0.002) -> Dict:

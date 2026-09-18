@@ -50,12 +50,20 @@ export interface GrainCountSpec {
   n_max: number;
 }
 
+/** The rocket and rail behind the rail exit speed metric. */
+export interface RailSpec {
+  hardware_mass: number | null;
+  length: number;
+  angle_deg: number;
+}
+
 export interface RunSpec {
   variables: VariableSpec[];
   objectives: ObjectiveSpec[];
   constraints: ConstraintSpec[];
   ordering: OrderingSpec;
   grain_count: GrainCountSpec;
+  rail: RailSpec;
   effort: string;
   budget_simulations: number | null;
   seeds: number | null;
@@ -196,6 +204,12 @@ export interface Sizing {
   } | null;
 }
 
+export interface RailFigures {
+  baseline_velocity: number | null;
+  max_hardware_mass: number | null;
+  target: number | null;
+}
+
 export interface Validation {
   problems: string[];
   problem_areas?: string[];
@@ -203,6 +217,7 @@ export interface Validation {
   estimate?: Estimate;
   sizing?: Sizing;
   preset_seconds?: Record<string, number> | null;
+  rail?: RailFigures | null;
 }
 
 export interface Diagnostic {

@@ -4,8 +4,11 @@
 import type { MetricMeta, Unit } from "./types";
 
 export const PA_PER_PSI = 6894.757293168361;
+/** Mass flux: kg/m²s per lb/in²s. Not a mass conversion. */
 export const KG_PER_LB = 703.0696;
 export const M_PER_IN = 0.0254;
+export const M_PER_FT = 0.3048;
+export const KG_PER_LB_MASS = 0.45359237;
 
 interface Scale {
   scale: number;
@@ -19,6 +22,10 @@ export interface UnitSystem {
   length: Scale & { sep: string };
   pressure: Scale;
   mass_flux: Scale;
+  /** Whole-rocket mass, for the launch rail. */
+  mass: Scale;
+  /** Rail length: feet or metres, since inches would read in the hundreds. */
+  rail: Scale;
   steps: [number, string][];
   stepHint: string;
 }
@@ -30,6 +37,8 @@ export const SYSTEMS: Record<Unit, UnitSystem> = {
     length: { scale: M_PER_IN, label: "″", sep: "", dp: 2 },
     pressure: { scale: PA_PER_PSI, label: "psi", dp: 0 },
     mass_flux: { scale: KG_PER_LB, label: "lb/in²s", dp: 3 },
+    mass: { scale: KG_PER_LB_MASS, label: "lb", dp: 2 },
+    rail: { scale: M_PER_FT, label: "ft", dp: 1 },
     steps: [[0, "any"], [0.01, "0.01″"], [0.05, "0.05″"],
             [0.1, "0.1″"], [0.0625, "1/16″"]],
     stepHint: "e.g. 0.05",
@@ -39,6 +48,8 @@ export const SYSTEMS: Record<Unit, UnitSystem> = {
     length: { scale: 0.001, label: "mm", sep: " ", dp: 1 },
     pressure: { scale: 1e6, label: "MPa", dp: 2 },
     mass_flux: { scale: 1, label: "kg/m²s", dp: 0 },
+    mass: { scale: 1, label: "kg", dp: 2 },
+    rail: { scale: 1, label: "m", dp: 2 },
     steps: [[0, "any"], [0.25, "0.25 mm"], [0.5, "0.5 mm"],
             [1, "1 mm"], [1.5, "1.5 mm"]],
     stepHint: "e.g. 1.5",

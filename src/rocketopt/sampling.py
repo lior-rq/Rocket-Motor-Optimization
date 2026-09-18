@@ -36,7 +36,7 @@ def _eval_worker(x: np.ndarray) -> Dict:
 
 def _evaluate(space: DesignSpace, x: np.ndarray, timestep: float) -> Dict:
     x = space.canonical_one(x)
-    metrics = simulate_motor(space.to_motor(x), timestep=timestep)
+    metrics = simulate_motor(space.to_motor(x), timestep=timestep, rail=space.rail)
     row = metrics.as_row()
     row.update({name: float(value) for name, value in zip(space.names, x)})
     row.update(
@@ -124,29 +124,31 @@ def evaluate_batch(
 # Tolerance analysis perturbs motors directly, so it needs a pool of dicts.
 
 _MOTOR_TIMESTEP: float = 0.01
+_MOTOR_RAIL = None
 
 
-def _init_motor_worker(timestep: float) -> None:
-    global _MOTOR_TIMESTEP
+def _init_motor_worker(timestep: float, rail) -> None:
+    global _MOTOR_TIMESTEP, _MOTOR_RAIL
     _MOTOR_TIMESTEP = timestep
+    _MOTOR_RAIL = rail
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         os.environ[var] = "1"
 
 
 def _simulate_motor_worker(motor: Dict):
-    return simulate_motor(motor, timestep=_MOTOR_TIMESTEP)
+    return simulate_motor(motor, timestep=_MOTOR_TIMESTEP, rail=_MOTOR_RAIL)
 
 
 def simulate_many(motors: List[Dict], timestep: float = 0.01,
-                  workers: Optional[int] = None) -> List:
+                  workers: Optional[int] = None, rail=None) -> List:
     """Simulates a list of complete motors in parallel."""
     if workers is None:
         workers = max(1, (os.cpu_count() or 2) - 2)
     if workers <= 1 or len(motors) < 2 * workers:
-        return [simulate_motor(m, timestep=timestep) for m in motors]
+        return [simulate_motor(m, timestep=timestep, rail=rail) for m in motors]
     chunk = max(1, len(motors) // (workers * 4))
     with ProcessPoolExecutor(max_workers=workers, initializer=_init_motor_worker,
-                             initargs=(timestep,)) as pool:
+                             initargs=(timestep, rail)) as pool:
         return list(pool.map(_simulate_motor_worker, motors, chunksize=chunk))
 
 

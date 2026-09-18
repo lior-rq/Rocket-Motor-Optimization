@@ -63,3 +63,16 @@ def test_validate_still_returns_plain_strings():
     spec.objectives[0].target = None
     assert spec.validate() == [m for _, m in spec.problems()]
     assert all(isinstance(p, str) for p in spec.validate())
+
+
+def test_rail_speed_without_a_rocket_belongs_to_the_constraints():
+    spec = build()
+    next(c for c in spec.constraints if c.metric == "rail_velocity").enabled = True
+    assert areas(spec, "hardware mass") == ["constraints"]
+    spec.rail.hardware_mass = 8.0
+    assert spec.problems() == []
+    # An objective on the rail speed needs the rocket just the same.
+    spec.constraints = [c for c in spec.constraints if c.metric != "rail_velocity"]
+    spec.rail.hardware_mass = None
+    spec.objectives[0].metric = "rail_velocity"
+    assert areas(spec, "hardware mass") == ["constraints"]

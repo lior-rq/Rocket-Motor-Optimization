@@ -14,6 +14,8 @@ M_PER_IN = 0.0254
 PA_PER_PSI = 6894.757293168361
 #: kg/(m^2 s) per lb/(in^2 s). Matches openMotor's own conversion table.
 KG_M2S_PER_LB_IN2S = 703.0696
+M_PER_FT = 0.3048
+KG_PER_LB = 0.45359237
 
 LENGTH_UNITS = {"m": 1.0, "mm": 1e-3, "cm": 1e-2, "in": M_PER_IN}
 PRESSURE_UNITS = {"Pa": 1.0, "kPa": 1e3, "MPa": 1e6, "psi": PA_PER_PSI}
