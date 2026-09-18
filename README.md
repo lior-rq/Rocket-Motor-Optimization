@@ -17,7 +17,7 @@ panel. Its [HTML source](docs/guide.html) is the file the PDF is rendered from.
 
 ## Installation
 
-For most people: [download the latest release](https://github.com/rebigex/rocket-optimization/releases/latest),
+For most people: [download the latest release](https://github.com/lior-rq/Rocket-Motor-Optimization/releases/latest),
 extract it, and run what's inside. No Python, git, or compiler needed. It opens in its
 own window rather than a browser tab, and keeps its files under
 `Documents/Rocket Optimizer/` instead of the project folder.
