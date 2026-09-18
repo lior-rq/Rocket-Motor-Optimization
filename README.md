@@ -219,6 +219,24 @@ figures. None of it is source, and none of it is committed.
 .venv/bin/python -m pytest tests/ -q
 ```
 
+### The page
+
+The interface is a React app in `frontend/` (Vite, TypeScript, Tailwind, Motion for
+the animation, react-three-fiber for the motor cutaway, Plotly for the charts). The
+built page lives in `app/static/` and is committed, so running from source needs no
+Node at all. Editing the frontend does:
+
+```bash
+cd frontend
+npm ci
+npm run dev      # hot reload at http://localhost:5173, proxied to app.py on 8420
+npm run build    # writes app/static/; commit the result
+```
+
+The server is unchanged by any of this: `app/server.py` speaks JSON, and the page
+is the only client. A running search is streamed to it over server-sent events
+(`/api/jobs/{id}/events`); `/api/jobs/{id}/live` still answers a poll.
+
 ### Building the desktop app
 
 ```bash

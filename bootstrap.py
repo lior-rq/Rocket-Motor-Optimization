@@ -25,7 +25,7 @@ OPENMOTOR_COMMIT = "0dfb3f1dd4f843499c7f71dc85a3dfde5dd15c6a"
 #: Enough of the dependency set to tell a built environment from a bare one.
 #: motorlib is last because it is the one that needs a compiler.
 REQUIRED = ("fastapi", "uvicorn", "numpy", "pandas", "pymoo", "sklearn",
-            "matplotlib", "plotly", "motorlib.motor")
+            "matplotlib", "motorlib.motor")
 
 #: 3.13 is the newest the pinned wheels cover. requirements.txt carries two
 #: sets: 3.10 and later get numpy 2 and the versions built for 3.13, while 3.9
@@ -202,7 +202,7 @@ def build(root: Path = ROOT) -> Path:
                 MAX_PYTHON[0], MAX_PYTHON[1], MAX_PYTHON[0], MAX_PYTHON[1]))
 
     prepare_vendor(root, python)
-    copy_plotly(root, python)
+    build_frontend(root)
 
     if not can_import(python):
         raise SystemExit("\nThe environment built but still cannot import "
@@ -250,25 +250,31 @@ def prepare_vendor(root: Path, python) -> Path:
     return vendor
 
 
-def copy_plotly(root: Path, python) -> None:
-    """The app serves Plotly from disk so it works offline.
+def build_frontend(root: Path, force: bool = False) -> bool:
+    """Compiles frontend/ into app/static with npm, when npm is around.
 
-    The JS ships inside the plotly package; copy it rather than pulling
-    from a CDN.
+    The built page is committed, so a clone runs without Node at all. This
+    only rebuilds when the build is missing (or ``force``), for anyone who
+    has edited the source. Returns whether a build is in place.
     """
-    plotly_js = subprocess.run(
-        [str(python), "-c",
-         "import plotly, pathlib; print(pathlib.Path(plotly.__file__).parent "
-         "/ 'package_data' / 'plotly.min.js')"],
-        capture_output=True, text=True, check=True).stdout.strip()
-    target = root / "app" / "static" / "vendor"
-    target.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(plotly_js, target / "plotly.min.js")
-    print("  copied plotly.min.js for offline use")
+    built = root / "app" / "static" / "index.html"
+    source = root / "frontend" / "package.json"
+    if built.exists() and not force:
+        return True
+    if not source.exists():
+        return built.exists()
+    npm = shutil.which("npm")
+    if npm is None:
+        print("  app/static is missing and npm is not installed, so the page "
+              "cannot be built.\n  Install Node.js, or check out the committed build.")
+        return built.exists()
+    _run([npm, "ci"], cwd=root / "frontend", what="installing frontend packages")
+    _run([npm, "run", "build"], cwd=root / "frontend", what="building the page")
+    return built.exists()
 
 
 def vendor_only(root: Path = ROOT) -> None:
-    """Prepares openMotor and Plotly against the current interpreter.
+    """Prepares openMotor and the page against the current interpreter.
 
     No venv, no requirements install: for CI and scripts/build_desktop.py,
     which already run inside an environment with requirements.txt in it.
@@ -277,7 +283,7 @@ def vendor_only(root: Path = ROOT) -> None:
         raise SystemExit("git is required to fetch openMotor.")
     python = sys.executable
     prepare_vendor(root, python)
-    copy_plotly(root, python)
+    build_frontend(root)
     if not can_import(python):
         raise SystemExit("\nThe vendor tree built, but this interpreter still "
                          "cannot import everything it needs.")

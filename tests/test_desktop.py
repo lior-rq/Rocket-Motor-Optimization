@@ -7,6 +7,7 @@ installed -- it ships in requirements-desktop.txt, not requirements.txt.
 
 import base64
 import json
+import os
 import sys
 import types
 
@@ -56,6 +57,17 @@ def test_save_file_reports_a_cancelled_dialog(tmp_path, fake_webview, monkeypatc
     assert result == {"cancelled": True}
 
 
+def test_desktop_api_exposes_nothing_but_methods():
+    """pywebview recurses into every public non-callable attribute (and on
+    Windows, into the native window behind it). Only methods may be public."""
+    api = DesktopApi()
+    api.bind(jobs=JobRegistry(), window=_StubWindow(dialog_result=None))
+
+    public = [n for n in dir(api) if not n.startswith("_")]
+
+    assert public and all(callable(getattr(api, n)) for n in public)
+
+
 def test_open_report_on_unknown_job_is_an_error():
     api = DesktopApi()
     api.bind(jobs=JobRegistry(), window=None)
@@ -81,6 +93,88 @@ def test_cancel_all_stops_every_running_job():
     assert running.status == "cancelled"
     assert running._cancel.is_set()
     assert done.status == "done"          # already finished; left alone
+
+
+def test_unblock_frozen_dlls_skips_when_not_a_frozen_windows_build(monkeypatch):
+    from app import desktop, paths
+    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(paths, "FROZEN", True)
+    monkeypatch.setattr(os, "remove", lambda *a: pytest.fail("should not run"))
+
+    desktop._unblock_frozen_dlls()
+
+
+def test_unblock_frozen_dlls_strips_the_zone_identifier_stream(tmp_path, monkeypatch):
+    from app import desktop, paths
+    exe_dir = tmp_path / "Rocket Optimizer"
+    (exe_dir / "_internal" / "pythonnet" / "runtime").mkdir(parents=True)
+    dll = exe_dir / "_internal" / "pythonnet" / "runtime" / "Python.Runtime.dll"
+    dll.write_bytes(b"")
+    (exe_dir / "_internal" / "readme.txt").write_bytes(b"")  # not a .dll
+    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(paths, "FROZEN", True)
+    monkeypatch.setattr(sys, "executable", str(exe_dir / "Rocket Optimizer.exe"))
+    removed = []
+    monkeypatch.setattr(os, "remove", removed.append)
+
+    desktop._unblock_frozen_dlls()
+
+    assert removed == [str(dll) + ":Zone.Identifier"]
+
+
+def test_wait_until_started_gives_up_when_the_server_thread_dies():
+    from app.desktop import _wait_until_started
+    server = types.SimpleNamespace(started=False)
+    thread = types.SimpleNamespace(is_alive=lambda: False)
+
+    assert _wait_until_started(server, thread, timeout=5) is False
+
+
+def test_wait_until_started_returns_once_started(monkeypatch):
+    import time
+    from app.desktop import _wait_until_started
+    server = types.SimpleNamespace(started=False)
+    thread = types.SimpleNamespace(is_alive=lambda: True)
+
+    def start_while_polling(_seconds):
+        server.started = True
+    monkeypatch.setattr(time, "sleep", start_while_polling)
+
+    assert _wait_until_started(server, thread, timeout=5) is True
+
+
+def test_server_thread_keeps_what_stopped_the_server():
+    import logging
+    from app.desktop import _ServerThread
+
+    def run():
+        logging.getLogger("uvicorn.error").error("address already in use")
+        raise SystemExit(1)
+
+    thread = _ServerThread(types.SimpleNamespace(run=run))
+    thread.start()
+    thread.join(timeout=5)
+
+    assert "address already in use" in thread.error()
+    assert "SystemExit: 1" in thread.error()
+
+
+def test_failure_html_escapes_the_traceback():
+    from app.desktop import _failure_html
+
+    page = _failure_html("RuntimeError: <server> stopped & died")
+
+    assert "&lt;server&gt; stopped &amp; died" in page
+    assert "The full log" not in page
+
+
+def test_failure_html_names_the_log_when_there_is_one(tmp_path):
+    from app.desktop import _failure_html
+
+    page = _failure_html("boom", tmp_path / "rocket-optimizer.log")
+
+    assert "The full log is at " in page
+    assert "rocket-optimizer.log" in page
 
 
 def test_about_reports_version_and_platform():

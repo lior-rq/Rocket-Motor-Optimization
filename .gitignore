@@ -19,8 +19,10 @@ motor/*
 # openMotor is GPLv3 and is cloned by scripts/setup_env.sh, not redistributed here.
 vendor/
 
-# Plotly's bundled JS is copied out of the pip package at setup time (4 MB).
-app/static/vendor/
+# The page's sources live in frontend/; the build lands in app/static and is
+# committed, so running from a clone needs no Node.
+frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
 
 .venv/
 .venv-desktop/

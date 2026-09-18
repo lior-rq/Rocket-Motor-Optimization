@@ -1,0 +1,268 @@
+@import "tailwindcss";
+
+/* A tool, so it is scanned and operated rather than read. Dark first: the
+   charts and the live search read best against depth. Numbers are tabular
+   wherever they line up. */
+
+:root, :root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:        #05070c;
+  --bg-2:      #0a0e17;
+  --surface:   rgba(255, 255, 255, 0.035);
+  --surface-2: rgba(255, 255, 255, 0.065);
+  --surface-3: rgba(255, 255, 255, 0.10);
+  --ink:       #eef2f7;
+  --ink-2:     #9aa5b4;
+  --ink-3:     #5f6a79;
+  --line:      rgba(255, 255, 255, 0.09);
+  --line-2:    rgba(255, 255, 255, 0.05);
+  --accent:    #5ec8ff;
+  --accent-2:  rgba(94, 200, 255, 0.14);
+  --accent-glow: rgba(94, 200, 255, 0.55);
+  --warn:      #ff8f5e;
+  --warn-2:    rgba(255, 143, 94, 0.14);
+  --good:      #3fdc9b;
+  --good-2:    rgba(63, 220, 155, 0.14);
+  --bad:       #ff5c6c;
+  --bad-2:     rgba(255, 92, 108, 0.14);
+  --series-1:  #4f9ff5;
+  --series-2:  #ff7a45;
+  --series-3:  #2fd39a;
+  --limit:     #ff5c6c;
+  --plot-bg:   #0b101a;
+  --shadow:    0 1px 0 rgba(255,255,255,.04) inset, 0 20px 50px -30px rgba(0,0,0,.9);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg:        #eef1f6;
+  --bg-2:      #f7f8fb;
+  --surface:   rgba(255, 255, 255, 0.72);
+  --surface-2: rgba(255, 255, 255, 0.95);
+  --surface-3: rgba(15, 23, 42, 0.05);
+  --ink:       #0f1520;
+  --ink-2:     #515c6b;
+  --ink-3:     #8b95a4;
+  --line:      rgba(15, 23, 42, 0.11);
+  --line-2:    rgba(15, 23, 42, 0.06);
+  --accent:    #1a6fd6;
+  --accent-2:  rgba(26, 111, 214, 0.12);
+  --accent-glow: rgba(26, 111, 214, 0.35);
+  --warn:      #d9581f;
+  --warn-2:    rgba(217, 88, 31, 0.12);
+  --good:      #15845a;
+  --good-2:    rgba(21, 132, 90, 0.12);
+  --bad:       #d93a4a;
+  --bad-2:     rgba(217, 58, 74, 0.12);
+  --series-1:  #2a78d6;
+  --series-2:  #eb6834;
+  --series-3:  #1baf7a;
+  --limit:     #e34948;
+  --plot-bg:   #ffffff;
+  --shadow:    0 1px 2px rgba(15, 23, 42, .05), 0 12px 32px -18px rgba(15, 23, 42, .25);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-2: var(--bg-2);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-warn: var(--warn);
+  --color-warn-2: var(--warn-2);
+  --color-good: var(--good);
+  --color-good-2: var(--good-2);
+  --color-bad: var(--bad);
+  --color-bad-2: var(--bad-2);
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -0.015em; }
+p { margin: 0; }
+code {
+  font-family: var(--mono); font-size: .88em;
+  background: var(--surface-3); padding: 1px 5px; border-radius: 4px;
+}
+sup { font-size: .7em; }
+strong, b { font-weight: 620; color: var(--ink); }
+.num, .n { font-variant-numeric: tabular-nums; font-family: var(--mono); }
+
+/* Backdrop: a slow drift of two glows and a faint grid, so the page has depth
+   without a single pixel of it competing with a chart. */
+.backdrop {
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(900px 600px at 15% -10%, var(--accent-2), transparent 60%),
+    radial-gradient(700px 500px at 110% 20%, var(--warn-2), transparent 60%),
+    var(--bg);
+}
+.backdrop::after {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--line-2) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line-2) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse at 50% 0%, black 20%, transparent 75%);
+  opacity: .45;
+}
+
+/* Cards. Near-opaque, so the backdrop's grid never reaches a chart or a
+   table; the glass is in the edge highlight and the blur at the border. */
+.glass {
+  background: var(--bg-2);
+  background: color-mix(in srgb, var(--bg-2) 94%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+}
+/* The sticky bars: near-opaque, so scrolled content never reads through
+   them even where backdrop-filter is unavailable. */
+.glass-bar {
+  background: var(--bg-2);
+  background: color-mix(in srgb, var(--bg-2) 88%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+}
+.glass-strong {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(24px) saturate(1.3);
+  -webkit-backdrop-filter: blur(24px) saturate(1.3);
+}
+
+/* Form controls: quiet by default, lit by the accent when active. */
+.input {
+  width: 100%; min-width: 0;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 10px; padding: 7px 10px; color: var(--ink);
+  font-family: var(--mono); font-size: 13px;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.input:focus { outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-2); }
+.input:disabled { opacity: .45; }
+.input::placeholder { color: var(--ink-3); }
+select.input { font-family: var(--sans); appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%),
+                    linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 55%, calc(100% - 11px) 55%;
+  background-size: 5px 5px; background-repeat: no-repeat; padding-right: 30px; }
+select.input option { background: var(--bg-2); color: var(--ink); }
+
+.check-box {
+  appearance: none; width: 17px; height: 17px; flex: none;
+  border: 1.5px solid var(--ink-3); border-radius: 5px;
+  background: transparent; display: inline-grid; place-content: center;
+  transition: background .15s, border-color .15s, box-shadow .15s;
+}
+.check-box::before {
+  content: ""; width: 9px; height: 9px; border-radius: 2px;
+  background: var(--bg); transform: scale(0); transition: transform .15s;
+}
+.check-box:checked { background: var(--accent); border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent-2); }
+.check-box:checked::before { transform: scale(1); }
+.check-box:disabled { opacity: .4; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px; font-size: 12.5px; font-weight: 520;
+  color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--line);
+  transition: color .15s, border-color .15s, background .15s, transform .12s;
+  white-space: nowrap;
+}
+.chip:hover:not(:disabled) { color: var(--ink); border-color: var(--accent);
+  background: var(--accent-2); }
+.chip:active:not(:disabled) { transform: scale(.97); }
+.chip:disabled { opacity: .45; }
+.chip.on { color: var(--accent); border-color: var(--accent); background: var(--accent-2); }
+
+.link { background: none; border: 0; padding: 0; color: var(--accent);
+  font-weight: 520; font-size: 12.5px; }
+.link:hover { text-decoration: underline; }
+
+/* Tables of numbers. */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.data-table th, .data-table td { padding: 6px 8px; border-bottom: 1px solid var(--line-2);
+  text-align: left; white-space: nowrap; }
+.data-table th { color: var(--ink-3); font-weight: 520; font-size: 11px;
+  letter-spacing: .04em; text-transform: uppercase; position: sticky; top: 0;
+  background: var(--bg-2); z-index: 1; }
+.data-table th.sortable { cursor: pointer; user-select: none; }
+.data-table th.sortable:hover, .data-table th.on { color: var(--accent); }
+.data-table td.n, .data-table th.n { text-align: right; }
+.data-table td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.data-table tr.clickable { cursor: pointer; transition: background .12s; }
+.data-table tr.clickable:hover, .data-table tr.hover { background: var(--surface-2); }
+.data-table tr.pick { background: var(--accent-2); }
+.data-table tr.pick td:first-child { box-shadow: inset 3px 0 var(--accent); }
+.data-table tr.vs td:first-child { box-shadow: inset 3px 0 var(--limit); }
+.data-table .pos { color: var(--good); }
+.data-table .neg { color: var(--bad); }
+
+/* Plotly hosts. */
+.plot { min-height: 260px; width: 100%; }
+.plot.tall { min-height: 340px; }
+.js-plotly-plot .plotly .main-svg { background: transparent !important; }
+
+/* Bars used by the margin rows, the blocking list and the robustness read. */
+.track { height: 7px; border-radius: 999px; background: var(--surface-3);
+  overflow: hidden; position: relative; }
+.track > .fill { height: 100%; border-radius: 999px; background: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow); }
+.track > .fill.hot, .track > .fill.over { background: var(--bad);
+  box-shadow: 0 0 10px var(--bad-2); }
+.track > .fill.close { background: var(--warn); box-shadow: 0 0 10px var(--warn-2); }
+.track > .fill.low { background: var(--warn); }
+.track > .fill.none { background: var(--good); box-shadow: none; }
+
+/* Alerts and problems. */
+.problem { padding: 9px 12px; border-radius: 10px; font-size: 13px; line-height: 1.45;
+  border: 1px solid var(--line); }
+.problem.err { background: var(--bad-2); border-color: color-mix(in srgb, var(--bad) 35%, transparent);
+  color: var(--ink); }
+.problem.note { background: var(--surface-2); color: var(--ink-2); }
+
+.busy { opacity: .55; transition: opacity .2s; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 999px;
+  border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important;
+    transition-duration: .001ms !important; }
+}

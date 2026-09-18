@@ -83,6 +83,7 @@ def _built_binary() -> Path:
 def _smoke_test(binary: Path) -> None:
     """Proves the frozen build actually runs, not just that it compiled."""
     print("\n==> Smoke-testing the built binary\n")
+    from app import paths
     from tests.sample_motor import write as write_sample_motor
 
     with tempfile.TemporaryDirectory(prefix="rocketopt-smoke-") as home:
@@ -90,7 +91,7 @@ def _smoke_test(binary: Path) -> None:
         env = dict(os.environ, ROCKETOPT_HOME=home)
         result = subprocess.run([str(binary), "--smoke"], env=env,
                                 capture_output=True, text=True, timeout=300)
-        log = Path(home) / "logs" / "rocket-optimizer.log"
+        log = Path(home) / paths.LOG_FILE.relative_to(paths.DATA_DIR)
         tail = log.read_text()[-4000:] if log.exists() else ""
         if result.returncode != 0:
             print(result.stdout)

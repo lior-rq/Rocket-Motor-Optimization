@@ -21,6 +21,5 @@ pymoo==0.6.1.5
 cython          # builds openMotor's extension; not imported
 fastapi
 uvicorn[standard]
-plotly
 pytest
 pymupdf

@@ -33,6 +33,7 @@ MOTOR_DIR = DATA_DIR / "motor"
 REPORTS_DIR = DATA_DIR / "reports"
 OUTPUTS_DIR = DATA_DIR / "outputs"
 LOG_DIR = DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "rocket-optimizer.log"
 
 
 def ensure_dirs() -> None:
