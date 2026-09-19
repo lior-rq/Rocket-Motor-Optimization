@@ -20,7 +20,7 @@ export default defineConfig({
         // does not rewrite four megabytes of vendor code in the commit.
         manualChunks(id: string) {
           if (id.includes("plotly.js")) return "plotly";
-          if (id.includes("/three/") || id.includes("@react-three")) return "three";
+          if (id.includes("node_modules/three/") || id.includes("@react-three")) return "three";
           return undefined;
         },
       },

@@ -3,8 +3,8 @@
    schedules a validate, so no screen can forget to. */
 
 import { create } from "zustand";
-import { api, watchJob } from "@/lib/api";
-import { isDesktopShell, openReport as bridgeOpenReport, saveBlob } from "@/lib/desktop";
+import { ApiError, api, retrying, sleep, watchJob } from "@/lib/api";
+import { onDesktopReady, openReport as bridgeOpenReport, saveBlob } from "@/lib/desktop";
 import { Units } from "@/lib/units";
 import type {
   BestSoFar, Defaults, Design, Diagnostic, EffortLevel, Hardware, Job,
@@ -81,7 +81,7 @@ interface State {
 
 interface Actions {
   boot(): Promise<void>;
-  loadDefaults(payload?: Defaults): Promise<void>;
+  loadDefaults(payload: Defaults): Promise<void>;
   setUnit(unit: Unit): void;
   toggleTheme(): void;
   edit(fn: (spec: RunSpec) => void, opts?: { validate?: boolean }): void;
@@ -118,8 +118,10 @@ interface Actions {
 
 export type Store = State & Actions;
 
+let booting: Promise<void> | null = null;
 let validateTimer: ReturnType<typeof setTimeout> | null = null;
 let validateSeq = 0;
+let loadSeq = 0;
 let watcher: AbortController | null = null;
 let toastSeq = 0;
 let batteryHandle: BatteryManager | null = null;
@@ -191,34 +193,12 @@ export const useApp = create<Store>((set, get) => ({
 
   /* ------------------------------------------------------------ boot */
 
-  async boot() {
-    document.documentElement.dataset.theme = get().theme;
-    readBattery(set);
-    try {
-      const about = await api.about();
-      set({ desktop: isDesktopShell() || about.desktop, version: about.version || "" });
-    } catch { /* an old server without this route; carry on */ }
-    try {
-      await get().loadDefaults();
-    } catch (err) {
-      set({ bootError: (err as Error).message || "Could not read the default motor." });
-    }
-    // ?step=N opens on that step and ?job=ID reopens a held run, for
-    // screenshots and the field guide.
-    const params = new URLSearchParams(location.search);
-    if (params.get("profile")) set({ profile: params.get("profile")! });
-    const job = params.get("job");
-    const step = Number(params.get("step"));
-    if (job) { set({ reached: STEPS - 1 }); await get().attachToRun(job); }
-    if (Number.isInteger(step) && step > 0 && step < STEPS && params.has("step")) {
-      set({ reached: Math.max(get().reached, step) });
-      get().goTo(step);
-    }
-    set({ booted: true });
+  boot() {
+    booting ??= runBoot(set, get);
+    return booting;
   },
 
-  async loadDefaults(payload?: Defaults) {
-    const data = payload ?? await api.defaults();
+  async loadDefaults(data: Defaults) {
     const units = new Units(get().unit, data.metrics);
     const spec = { ...data.spec, display_units: units.displayUnits() };
     set(s => ({
@@ -300,9 +280,9 @@ export const useApp = create<Store>((set, get) => ({
   async uploadMotor(file) {
     const content = await file.text();
     try {
-      const data = await api.uploadMotor(file.name, content);
-      await get().loadDefaults(data);
-      get().toast("Loaded " + file.name);
+      if (await loadMotor(() => api.uploadMotor(file.name, content), get)) {
+        get().toast("Loaded " + file.name);
+      }
     } catch {
       get().toast("Could not read that .ric file.");
     }
@@ -310,9 +290,9 @@ export const useApp = create<Store>((set, get) => ({
 
   async applyHardware(ends) {
     try {
-      const data = await api.setHardware(ends);
-      await get().loadDefaults(data);
-      get().toast("Hardware applied. Bounds and baseline updated.");
+      if (await loadMotor(() => api.setHardware(ends), get)) {
+        get().toast("Hardware applied. Bounds and baseline updated.");
+      }
     } catch {
       get().toast("Could not apply that hardware.");
     }
@@ -320,9 +300,9 @@ export const useApp = create<Store>((set, get) => ({
 
   async resetHardware() {
     try {
-      const data = await api.resetHardware();
-      await get().loadDefaults(data);
-      get().toast("Reloaded the motor exactly as the file has it");
+      if (await loadMotor(api.resetHardware, get)) {
+        get().toast("Reloaded the motor exactly as the file has it");
+      }
     } catch {
       get().toast("Could not reset.");
     }
@@ -605,7 +585,7 @@ export const useApp = create<Store>((set, get) => ({
       }
       const fraction = job.bundle_total ? job.bundle_done / job.bundle_total : 0;
       set({ bundle: { kind, active: true, fraction, message: job.bundle_message || "Working…" } });
-      await new Promise(r => setTimeout(r, 900));
+      await sleep(900);
     }
   },
 
@@ -631,6 +611,52 @@ export const useApp = create<Store>((set, get) => ({
 
 type Set = (partial: Partial<State> | ((s: State) => Partial<State>)) => void;
 type Get = () => Store;
+
+/** Once per page: StrictMode mounts App twice. */
+async function runBoot(set: Set, get: Get) {
+  document.documentElement.dataset.theme = get().theme;
+  readBattery(set);
+  onDesktopReady(() => set({ desktop: true }));
+  // Nothing waits on the version chip, so the motor MUST NOT either.
+  retrying(api.about).then(about => {
+    set(s => ({ desktop: s.desktop || about.desktop, version: about.version || "" }));
+  }).catch(() => { /* an old server without this route */ });
+  // ?step=N opens on that step and ?job=ID reopens a held run, for
+  // screenshots and the field guide. Only those hold the pane until applied.
+  const params = new URLSearchParams(location.search);
+  if (params.get("profile")) set({ profile: params.get("profile")! });
+  const job = params.get("job");
+  const step = params.has("step") ? Number(params.get("step")) : NaN;
+  if (!job && Number.isNaN(step)) set({ booted: true });
+  try {
+    await loadMotor(() => retrying(api.defaults), get);
+  } catch (err) {
+    set({ bootError: err instanceof ApiError ? err.message : "Could not reach the server." });
+  }
+  if (job) { set({ reached: STEPS - 1 }); await get().attachToRun(job); }
+  if (Number.isInteger(step) && step > 0 && step < STEPS) {
+    set({ reached: Math.max(get().reached, step) });
+    get().goTo(step);
+  }
+  set({ booted: true });
+}
+
+/** Loads the motor `call` returns unless a later load began meanwhile: the
+    server holds the last one sent, so a slow earlier reply MUST NOT win.
+    False when dropped; a dropped call's failure is dropped with it. */
+async function loadMotor(call: () => Promise<Defaults>, get: Get): Promise<boolean> {
+  const seq = ++loadSeq;
+  let data: Defaults;
+  try {
+    data = await call();
+  } catch (err) {
+    if (seq !== loadSeq) return false;
+    throw err;
+  }
+  if (seq !== loadSeq) return false;
+  await get().loadDefaults(data);
+  return true;
+}
 
 function watch(id: string, set: Set, get: Get) {
   watcher?.abort();

@@ -20,6 +20,21 @@ async function detail(res: Response): Promise<string> {
   }
 }
 
+export const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/** Retries dropped requests only: fetch rejects those with a TypeError.
+    A 4xx/5xx or a bad body is an answer, not a dropped request. */
+export async function retrying<T>(call: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await call();
+    } catch (err) {
+      if (!(err instanceof TypeError) || i >= attempts) throw err;
+      await sleep(800);
+    }
+  }
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new ApiError(res.status, await detail(res));
@@ -102,7 +117,7 @@ export function watchJob(id: string, onJob: (job: Job) => void,
         } catch (err) {
           if (!done) { done = true; reject(err); return; }
         }
-        await new Promise(r => setTimeout(r, 900));
+        await sleep(900);
       }
     };
 

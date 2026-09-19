@@ -14,6 +14,13 @@ declare global {
 
 export const isDesktopShell = () => typeof window !== "undefined" && !!window.pywebview;
 
+/** Runs once the bridge exists. On Windows pywebview injects it only after
+    the page's own scripts have run, so a check at boot alone misses it. */
+export function onDesktopReady(fn: () => void): void {
+  if (isDesktopShell()) { fn(); return; }
+  window.addEventListener("pywebviewready", fn, { once: true });
+}
+
 const bridge = () => window.pywebview?.api;
 
 // JS objects crossing the bridge are JSON, and a Blob is not one.

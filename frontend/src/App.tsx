@@ -17,6 +17,7 @@ export function App() {
   const boot = useApp(s => s.boot);
   const step = useApp(s => s.step);
   const booted = useApp(s => s.booted);
+  const loaded = useApp(s => !!s.spec);
   const bootError = useApp(s => s.bootError);
   useEffect(() => { boot(); }, [boot]);
   const Step = STEPS[step];
@@ -27,11 +28,7 @@ export function App() {
       <Progress />
       <Stepper />
       <main className="flex-1 mx-4 my-4">
-        {bootError ? (
-          <NoMotor message={bootError} />
-        ) : !booted ? (
-          <Booting />
-        ) : (
+        {loaded && booted ? (
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={step}
@@ -43,6 +40,10 @@ export function App() {
               <Step />
             </motion.div>
           </AnimatePresence>
+        ) : bootError ? (
+          <NoMotor message={bootError} />
+        ) : (
+          <Booting />
         )}
       </main>
       <Footer />
