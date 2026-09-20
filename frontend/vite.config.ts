@@ -1,4 +1,5 @@
-import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -6,7 +7,13 @@ import tailwindcss from "@tailwindcss/vite";
 // bundles. Fixed file names: the server already sends Cache-Control:
 // no-store, so hashes would only churn the committed build.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), noDuplicateModules()],
+  resolve: {
+    // `@/` MUST be a Vite alias, not tsconfig `paths` alone. Left to
+    // rolldown's fallback resolver, Windows spelled the same file two ways
+    // (`@/store/app` vs `./store/app`) and shipped two stores.
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)).replace(/\\/g, "/") },
+  },
   build: {
     outDir: "../app/static",
     emptyOutDir: true,
@@ -31,3 +38,23 @@ export default defineConfig({
     proxy: { "/api": "http://127.0.0.1:8420" },
   },
 });
+
+/** Fails the build if one file was bundled under two spellings of its path. */
+function noDuplicateModules(): Plugin {
+  return {
+    name: "no-duplicate-modules",
+    generateBundle(_, bundle) {
+      const seen = new Map<string, string>();
+      for (const chunk of Object.values(bundle)) {
+        if (chunk.type !== "chunk") continue;
+        for (const id of Object.keys(chunk.modules)) {
+          if (id.startsWith("\0")) continue;
+          const key = id.replace(/^\\\\\?\\/, "").replace(/\\/g, "/").toLowerCase();
+          const other = seen.get(key);
+          if (other && other !== id) this.error(`${id} is bundled twice, also as ${other}`);
+          seen.set(key, id);
+        }
+      }
+    },
+  };
+}
