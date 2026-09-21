@@ -152,6 +152,9 @@ once *I know what I'm doing* is ticked.
 
 Time estimates are not shown until the diagnostic on the settings page has measured
 this machine at these settings, since a rate the program has not measured is a guess.
+The settings page also checks that the machine is plugged in, kept awake and set to
+its highest performance mode, since a search that throttles partway through makes the
+measurement wrong.
 
 ## Searching the grain count
 
@@ -219,6 +222,27 @@ rewritten on every run, so its contents always describe the motor that was just
 optimised. It contains `result.json`, one `.ric` file per legal design, and the report
 figures. None of it is source, and none of it is committed.
 
+## Checking build robustness
+
+The optimiser works from nominal dimensions, so a design sitting exactly on a limit is
+a coin flip once real tolerances are applied. The robustness check, available on a
+design once a run has finished, simulates it 400 times with tolerances drawn onto the
+hardware and propellant, and reports the share of builds that still satisfy every
+enabled limit, with a 95% confidence interval and the exceedance probability of each
+limit individually.
+
+Ten tolerance fields are available, each entered as a standard deviation or a uniform
+half-width. Core diameter and grain length are drawn once per grain, since each is a
+separate reamer or casting pass; the nozzle dimensions, burn-rate coefficients,
+density, nozzle efficiency and ambient pressure are drawn once for the whole motor,
+since they come from one batch or one machining setup. Core diameter, throat and the
+burn-rate coefficient are on by default at values plausible for a home shop and a
+hand-mixed batch; the rest start switched off and are meant to be replaced with what
+your equipment and propellant actually do.
+
+The check runs at the search's 0.01 s timestep rather than the finer verification
+step, since several hundred builds at the fine timestep would spend minutes sharpening
+a distribution the tolerance assumptions already dominate.
 
 ## Development
 

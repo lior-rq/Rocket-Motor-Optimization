@@ -149,7 +149,7 @@ footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--rule);
   section{margin:26px 0 0}
   /* Keep the small, self-contained things whole. Steps are allowed to break --
      forbidding it strands most of a page every time one will not fit. */
-  .card, .note, .scroll, pre, table{break-inside:avoid}
+  .card, .note, .scroll, pre, table, footer{break-inside:avoid}
   .panel-name, ol.steps h3{break-after:avoid}
   ol.steps>li{break-before:auto}
   p, dl.ref{orphans:3; widows:3}
@@ -218,6 +218,14 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     the curve, and export the <code>.ric</code>. The rest of this guide details those
     steps.</p>
   </div>
+  <div class="note">
+    <span class="lbl">Most people should skip this page</span>
+    <p>The command above is for running from a checkout. For most people the faster
+    path is a <a href="https://github.com/lior-rq/Rocket-Motor-Optimization/releases/latest">downloaded
+    release</a>: no Python or git, opens in its own window, and keeps its files under
+    <code>Documents/Rocket Optimizer/</code>. See the README for the one-time
+    unsigned-build warning on first launch.</p>
+  </div>
 </section>
 
 <hr class="rule">
@@ -229,10 +237,11 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     <li>
       <span class="panel-name">Loaded motor</span>
       <h3>Check the loaded motor</h3>
-      <p>Grains, bore, nozzle and propellant, along with the motor's performance as it
-      stands: thrust, impulse, peak pressure, Kn and mass flux. Warnings from openMotor
-      appear here as well. An over-expanded nozzle is reported as <em>low exit
-      pressure</em>.</p>
+      <p>A 3D cutaway of the grain stack opens the page, to scale and forward at left;
+      drag to orbit it and scroll to zoom. Below it, grains, bore, nozzle and
+      propellant, along with the motor's performance as it stands: thrust, impulse,
+      peak pressure, Kn and mass flux. Warnings from openMotor appear here as well. An
+      over-expanded nozzle is reported as <em>low exit pressure</em>.</p>
       <p>These numbers are worth reading first. A motor that already breaks a limit as
       loaded is not a small problem to correct, and the search will be looking for a
       substantially different motor.</p>
@@ -277,6 +286,9 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <p>The buttons below the table set every step at once. The default is
       <code>0.05&Prime;</code>. <code>0.01&Prime;</code>
       is two decimal places, which is the finest tolerance commonly held.</p>
+      <p><strong>Free dimensions</strong>, alongside, is a running tally: how many of
+      the available dimensions are free, the range or held value of each, and whether
+      they share one machining grid or several.</p>
     </li>
 
     <li>
@@ -313,28 +325,22 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     </li>
 
     <li>
-      <span class="panel-name">Possible configurations</span>
-      <h3>See how big the problem is</h3>
-      <p>This panel updates as the configuration changes. It counts <em>distinct
-      motors</em> rather than grid points, since cores are stored sorted and one set of
-      six diameters therefore represents one motor rather than 720. The figure reaches
-      the order of 10¹³ for nine free dimensions on a 0.05&Prime; grid, and 10¹⁹ on a
-      0.01&Prime; one, which is why the
-      application uses a genetic search rather than enumeration.</p>
-      <p>Where a Kn limit is set, the panel also reports what the limits provably exclude
-      and offers <strong>Apply tighter bounds</strong>, which narrows the search to the
-      region where a legal motor can still exist. Nothing legal is removed.</p>
-    </li>
-
-    <li>
-      <span class="panel-name">What to optimize</span>
-      <h3>Choose the objectives</h3>
-      <p>Any of eighteen metrics, each set to maximise, minimise or reach a target value.
-      Selecting two produces a trade-off curve rather than a single answer. Thrust and
-      impulse oppose each other, so the useful question is usually which point on that
-      curve to build.</p>
-      <p>Presets are provided for the common cases: <em>Max initial thrust</em>,
-      <em>Max impulse</em>, <em>Flattest curve</em> and <em>Thrust vs impulse</em>.</p>
+      <span class="panel-name">Grain cores</span>
+      <h3>Choose an ordering rule</h3>
+      <p>Four options. The choice has a material effect on the result:</p>
+      <div class="scroll" style="margin-top:12px">
+      <table>
+        <tbody>
+          <tr><td>Any order</td><td>No rule. Tends to choke the aft grain.</td></tr>
+          <tr><td>Never narrow aft</td><td>Cores do not shrink going aft, ties allowed.
+            This is the default.</td></tr>
+          <tr><td>Strictly wider</td><td>Each core exceeds the one ahead by a set
+            minimum. Costs roughly 0.8% of thrust compared with allowing ties.</td></tr>
+          <tr><td>Paired mandrels</td><td>A small number of sizes shared across grains,
+            such as three sizes across six grains. Requires fewer mandrels.</td></tr>
+        </tbody>
+      </table>
+      </div>
     </li>
 
     <li>
@@ -359,30 +365,31 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       mass plus its own propellant, and the speed at the top is what the limit is
       read against. The card also shows the heaviest hardware the loaded motor would
       lift to the target speed, which is usually the number you actually wanted.</p>
-      <p>Below the table, the loaded motor is shown against every limit, both as a
-      table and as its pressure, Kn and mass flux over time with the limits drawn on
-      as dotted lines.</p>
-      <p>No design is reported unless it satisfies every ticked limit when re-simulated
-      at full fidelity with all safety margins removed.</p>
+      <p>Alongside, the loaded motor is shown against every limit as a table. No design
+      is reported unless it satisfies every ticked limit when re-simulated at full
+      fidelity with all safety margins removed.</p>
+      <p><strong>Possible configurations</strong> counts <em>distinct motors</em>
+      rather than grid points, since cores are stored sorted and one set of six
+      diameters therefore represents one motor rather than 720. The figure reaches the
+      order of 10¹³ for nine free dimensions on a 0.05&Prime; grid, and 10¹⁹ on a
+      0.01&Prime; one, which is why the application uses a genetic search rather than
+      enumeration. Where a Kn limit is set, it also reports what the limits provably
+      exclude and offers <strong>Apply tighter bounds</strong>, which narrows the
+      search to the region where a legal motor can still exist. Nothing legal is
+      removed.</p>
     </li>
 
     <li>
-      <span class="panel-name">Grain cores</span>
-      <h3>Choose an ordering rule</h3>
-      <p>Four options. The choice has a material effect on the result:</p>
-      <div class="scroll" style="margin-top:12px">
-      <table>
-        <tbody>
-          <tr><td>Any order</td><td>No rule. Tends to choke the aft grain.</td></tr>
-          <tr><td>Never narrow aft</td><td>Cores do not shrink going aft, ties allowed.
-            This is the default.</td></tr>
-          <tr><td>Strictly wider</td><td>Each core exceeds the one ahead by a set
-            minimum. Costs roughly 0.8% of thrust compared with allowing ties.</td></tr>
-          <tr><td>Paired mandrels</td><td>A small number of sizes shared across grains,
-            such as three sizes across six grains. Requires fewer mandrels.</td></tr>
-        </tbody>
-      </table>
-      </div>
+      <span class="panel-name">What to optimize</span>
+      <h3>Choose the objectives</h3>
+      <p>Any of nineteen metrics, each set to maximise, minimise or reach a target
+      value. Selecting two produces a trade-off curve rather than a single answer.
+      Thrust and impulse oppose each other, so the useful question is usually which
+      point on that curve to build. <strong>What this run will return</strong>
+      restates the choice in a sentence: one objective returns a single best motor,
+      two or more return a curve trading them against each other.</p>
+      <p>Presets are provided for the common cases: <em>Thrust vs impulse</em>,
+      <em>Max initial thrust</em>, <em>Max impulse</em> and <em>Flattest curve</em>.</p>
     </li>
 
     <li>
@@ -410,15 +417,15 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       <p>The boxes behind the presets are read-only until <em>I know what I&rsquo;m
       doing</em> is ticked, which unlocks the budget, the search count and the core
       count.</p>
-      <p><em>Surrogate search</em> spends half its budget on a space-filling sample,
-      then works in rounds: it trains models on every simulation so far, runs NSGA-II
-      against the models, and simulates the designs the models propose. Each round
-      puts the burns where the trade-off curve is, so the models are most accurate
-      exactly there. The curve is taken from simulated designs only and verified at
-      the fine timestep, as the full search does. It maps the whole curve on the same
-      budget the full search spends on one genetic run per seed; it is marked beta
-      because it has been measured on fewer configurations. The full search runs
-      every candidate through openMotor.</p>
+      <p>The <strong>Search method</strong> card switches on <em>Surrogate search</em>,
+      which spends half its budget on a space-filling sample, then works in rounds: it
+      trains models on every simulation so far, runs NSGA-II against the models, and
+      simulates the designs the models propose. Each round puts the burns where the
+      trade-off curve is, so the models are most accurate exactly there. The curve is
+      taken from simulated designs only and verified at the fine timestep, as the full
+      search does. It maps the whole curve on the same budget the full search spends
+      on one genetic run per seed; it is marked beta because it has been measured on
+      fewer configurations. The full search runs every candidate through openMotor.</p>
       <p><strong>Cores to use</strong> sets how many simulations run at once. Automatic
       uses the machine&rsquo;s performance cores where the platform reports them, since
       the slowest worker sets the pace and adding efficiency cores makes a run longer
@@ -427,6 +434,13 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
       real simulations at these settings. A rate the program has not measured on this
       machine is a guess. The measured figure is then increased by 20% to account for
       the machine slowing down as it heats up.</p>
+      <p><strong>Get the machine ready</strong> checks three things a browser cannot
+      always see for itself: the machine is on a power adapter rather than a battery,
+      something is holding the screen awake so a search cannot be interrupted
+      part way through, and the power mode is set to its highest-performance setting.
+      Where the browser can read the state directly &mdash; battery and wake lock, on
+      the browsers that expose them &mdash; the card acts on it; where it cannot, a
+      button records that the box was checked by hand.</p>
     </li>
   </ol>
   <div class="note">
@@ -450,34 +464,38 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
     <div class="card">
       <span class="tag">one motor</span>
       <h3>Design Review</h3>
-      <p>Thrust curve, chamber pressure and Kn, a scaled cross-section, the spec sheet,
-      and margin bars showing proximity to each limit. Amber indicates a design within 3%
-      of a limit.</p>
+      <p>Thrust curve, chamber pressure and Kn, a 3D cutaway you can orbit, the spec
+      sheet, and margin bars showing proximity to each limit. Amber indicates a design
+      within 3% of a limit.</p>
     </div>
     <div class="card">
       <span class="tag">all of them</span>
       <h3>Trade-off Explorer</h3>
       <p>The curve of options, where any point can be clicked to load it into Design
       Review and shift-clicked to compare it. Also shows every design attempted, a
-      parallel-coordinates view of what the successful designs have in common, and a
-      table with a <code>.ric</code> export button on each row. Any column heading in
-      the table sorts it; the first column restores the ranked order. Up to ninety
-      designs are kept, spread along the curve when the front is longer.</p>
+      parallel-coordinates view of what the successful designs have in common, where
+      the search spent its time on each objective, and a table with a <code>.ric</code>
+      export button on each row. Any column heading in the table sorts it; the first
+      column restores the ranked order. Up to ninety designs are kept, spread along
+      the curve when the front is longer.</p>
     </div>
     <div class="card">
       <span class="tag">the search</span>
       <h3>Optimizer Diagnostics</h3>
       <p>Progress against simulations spent and which limit is binding. When the
-      grain count was searched, a table lists every count with its outcome. In
-      trade-off mode it also reports model accuracy and which dimension has the
+      grain count was searched, a table lists every count with its outcome. Under the
+      surrogate search, it also reports model accuracy and which dimension has the
       greatest influence.</p>
     </div>
     <div class="card">
       <span class="tag">before and after</span>
       <h3>Compare &amp; Safety</h3>
       <p>The loaded motor against the selected design, a specification delta table,
-      mass flux and core Mach in each grain against their limits, and a tornado chart
-      of what most affects the leading objective.</p>
+      mass flux and core Mach in each grain against their limits, a tornado chart of
+      what most affects the leading objective, and a build-tolerance check: simulate
+      the design 400 times with your machining and propellant tolerances applied, and
+      see the share that still meet every limit, with a confidence interval and each
+      limit's own exceedance rate.</p>
     </div>
   </div>
   <div class="note steel">
@@ -565,7 +583,9 @@ python3 app.py                   <span style="color:var(--ink-3)"># opens http:/
   <p>The application is a thin layer over the library, so its behaviour can be
   scripted. <code>rocketopt.runner.run</code> takes a configuration and a motor and
   returns verified designs. <code>rocketopt.report</code> and
-  <code>rocketopt.bundle</code> render those into PDFs.</p>
+  <code>rocketopt.bundle</code> render those into PDFs, and
+  <code>rocketopt.tolerance.propagate</code> runs the build-tolerance check on a
+  chosen design.</p>
   </div>
 <pre>scripts/verify_ordering.py     check the core-sorting assumption against the simulator
 .venv/bin/python -m pytest tests/ -q</pre>
